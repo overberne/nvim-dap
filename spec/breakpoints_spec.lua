@@ -40,14 +40,32 @@ describe('breakpoints', function()
     assert.are.same(expected, breakpoints.get())
   end)
 
+  it('can get a logpoint', function()
+    local curbuf = api.nvim_get_current_buf()
+    api.nvim_buf_set_lines(curbuf, 0, -1, true, {"Hello", "World"})
+    breakpoints.set({ log_message = 'xs={xs}' }, curbuf, 1)
+    breakpoints.set({ condition = 'true' }, curbuf, 2)
+    local expected = {
+      [curbuf] = {
+        {
+          buf = curbuf,
+          line = 1,
+          logMessage = 'xs={xs}',
+        },
+      },
+    }
+    assert.are.same(expected, breakpoints.get({ log_message = true }))
+  end)
+
   it('can remove a breakpoint', function()
     local lnum = api.nvim_win_get_cursor(0)[1]
+    local curbuf = api.nvim_get_current_buf()
     breakpoints.toggle({ log_message = 'xs={xs}'})
     local expected = {
-      [1] = {
+      [curbuf] = {
         {
-          buf = 1,
-          line = 1,
+          buf = curbuf,
+          line = lnum,
           logMessage = 'xs={xs}',
         },
       },

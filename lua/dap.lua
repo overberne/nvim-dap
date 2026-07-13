@@ -1047,7 +1047,7 @@ function M.toggle_breakpoint(condition, hit_condition, log_message, replace_old)
     replace = replace_old
   })
   local bufnr = api.nvim_get_current_buf()
-  local bps = lazy.breakpoints.get(bufnr)
+  local bps = lazy.breakpoints.get({ bufexpr = bufnr })
   broadcast(sessions, function(s)
     s:set_breakpoints(bps)
   end)
@@ -1098,7 +1098,7 @@ function M.run_to_cursor()
   local lnum = api.nvim_win_get_cursor(0)[1]
   lazy.breakpoints.set({}, cur_bufnr, lnum)
 
-  local temp_bps = lazy.breakpoints.get(cur_bufnr)
+  local temp_bps = lazy.breakpoints.get({ bufexpr = cur_bufnr })
   for bufnr, _ in pairs(bps_before) do
     if bufnr ~= cur_bufnr then
       temp_bps[bufnr] = {}

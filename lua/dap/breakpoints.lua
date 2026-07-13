@@ -19,12 +19,12 @@ local M = {}
 ---@return vim.fn.sign_getplaced.ret.item[]
 local function get_breakpoint_signs(bufexpr)
   if bufexpr then
-    return vim.fn.sign_getplaced(bufexpr, {group = ns})
+    return vim.fn.sign_getplaced(bufexpr, { group = ns })
   end
   local bufs_with_signs = vim.fn.sign_getplaced()
   local result = {}
   for _, buf_signs in ipairs(bufs_with_signs) do
-    buf_signs = vim.fn.sign_getplaced(buf_signs.bufnr, {group = ns})[1]
+    buf_signs = vim.fn.sign_getplaced(buf_signs.bufnr, { group = ns })[1]
     if #buf_signs.signs > 0 then
       table.insert(result, buf_signs)
     end
@@ -61,7 +61,7 @@ function M.update(breakpoint)
             ns,
             get_sign_name(bp),
             bp.buf,
-            { lnum = bp.line; priority = 21; }
+            { lnum = bp.line, priority = 21, }
           )
         end
         return
@@ -70,11 +70,10 @@ function M.update(breakpoint)
   end
 end
 
-
 ---@param bufnr integer
 ---@param state dap.Breakpoint
 function M.set_state(bufnr, state)
-  local ok, placements = pcall(vim.fn.sign_getplaced, bufnr, { group = ns; lnum = state.line; })
+  local ok, placements = pcall(vim.fn.sign_getplaced, bufnr, { group = ns, lnum = state.line, })
   if not ok then
     return
   end
@@ -93,19 +92,18 @@ function M.set_state(bufnr, state)
         ns,
         'DapBreakpointRejected',
         bufnr,
-        { lnum = state.line; priority = 21; }
+        { lnum = state.line, priority = 21, }
       )
     end
   end
 end
 
-
 function M.remove(bufnr, lnum)
-  local placements = vim.fn.sign_getplaced(bufnr, { group = ns; lnum = lnum; })
+  local placements = vim.fn.sign_getplaced(bufnr, { group = ns, lnum = lnum, })
   local signs = placements[1].signs
   if signs and #signs > 0 then
     for _, sign in pairs(signs) do
-      vim.fn.sign_unplace(ns, { buffer = bufnr; id = sign.id; })
+      vim.fn.sign_unplace(ns, { buffer = bufnr, id = sign.id, })
       bp_by_sign_by_buf[bufnr][sign.id] = nil
     end
     return true
@@ -146,7 +144,7 @@ function M.toggle(opts, bufnr, lnum)
     ns,
     sign_name,
     bufnr,
-    { lnum = lnum; priority = 21; }
+    { lnum = lnum, priority = 21, }
   )
   if sign_id ~= -1 then
     if not bp_by_sign_by_buf[bufnr] then
@@ -156,48 +154,66 @@ function M.toggle(opts, bufnr, lnum)
   end
 end
 
-
 function M.set(opts, bufnr, lnum)
   opts = opts or {}
   opts.replace = true
   M.toggle(opts, bufnr, lnum)
 end
 
-
---- Returns all breakpoints grouped by bufnr
----@param bufexpr? integer|string
----@return table<integer, dap.bp>
-function M.get(bufexpr)
-  local signs = get_breakpoint_signs(bufexpr)
-  if #signs == 0 then
-    return {}
+do
+  local function matches(value, filter)
+    return filter == nil or filter == (value ~= nil and value ~= "")
   end
-  local result = {}
-  for _, buf_bp_signs in pairs(signs) do
-    local breakpoints = {}
-    local bufnr = buf_bp_signs.bufnr
-    result[bufnr] = breakpoints
-    for _, bp in pairs(buf_bp_signs.signs) do
-      local bp_entry = bp_by_sign_by_buf[bufnr][bp.id] or {}
-      table.insert(breakpoints, {
-        buf = bufnr,
-        line = bp.lnum;
-        condition = bp_entry.condition;
-        hitCondition = bp_entry.hitCondition;
-        logMessage = bp_entry.logMessage;
-        state = bp_entry.state,
-      })
+
+  --- Returns all breakpoints grouped by bufnr
+  ---
+  --- @param opts? {
+  ---   bufexpr?: integer|string,
+  ---   lnum?: integer,
+  ---   condition?: boolean,
+  ---   log_message?: boolean,
+  ---   hit_condition?: boolean,
+  --- }
+  --- @return table<integer, dap.bp[]>
+  function M.get(opts)
+    opts = opts or {}
+
+    local signs = get_breakpoint_signs(opts.bufexpr)
+    if #signs == 0 then
+      return {}
     end
+    local result = {}
+    for _, buf_bp_signs in pairs(signs) do
+      local breakpoints = {}
+      local bufnr = buf_bp_signs.bufnr
+      for _, bp in pairs(buf_bp_signs.signs) do
+        local bp_entry = bp_by_sign_by_buf[bufnr][bp.id] or {}
+        if (opts.lnum == nil or bp.lnum == opts.lnum)
+            and matches(bp_entry.condition, opts.condition)
+            and matches(bp_entry.logMessage, opts.log_message)
+            and matches(bp_entry.hitCondition, opts.hit_condition)
+        then
+          table.insert(breakpoints, {
+            buf = bufnr,
+            line = bp.lnum,
+            condition = bp_entry.condition,
+            hitCondition = bp_entry.hitCondition,
+            logMessage = bp_entry.logMessage,
+            state = bp_entry.state,
+          })
+        end
+      end
+      if #breakpoints > 0 then
+        result[bufnr] = breakpoints
+      end
+    end
+    return result
   end
-  return result
 end
-
-
 function M.clear()
   vim.fn.sign_unplace(ns)
   bp_by_sign_by_buf = {}
 end
-
 
 do
   local function not_nil(x)
