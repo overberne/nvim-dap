@@ -159,6 +159,12 @@ function M.set(opts, bufnr, lnum)
   opts.replace = true
   M.toggle(opts, bufnr, lnum)
 end
+---@class BpFilterOpts
+---@field bufexpr? integer|string,
+---@field lnum? integer,
+---@field condition? boolean,
+---@field log_message? boolean,
+---@field hit_condition? boolean,
 
 do
   local function matches(value, filter)
@@ -167,14 +173,8 @@ do
 
   --- Returns all breakpoints grouped by bufnr
   ---
-  --- @param opts? {
-  ---   bufexpr?: integer|string,
-  ---   lnum?: integer,
-  ---   condition?: boolean,
-  ---   log_message?: boolean,
-  ---   hit_condition?: boolean,
-  --- }
-  --- @return table<integer, dap.bp[]>
+  ---@param opts? BpFilterOpts
+  ---@return table<integer, dap.bp[]>
   function M.get(opts)
     opts = opts or {}
 
@@ -186,20 +186,20 @@ do
     for _, buf_bp_signs in pairs(signs) do
       local breakpoints = {}
       local bufnr = buf_bp_signs.bufnr
-      for _, bp in pairs(buf_bp_signs.signs) do
-        local bp_entry = bp_by_sign_by_buf[bufnr][bp.id] or {}
-        if (opts.lnum == nil or bp.lnum == opts.lnum)
-            and matches(bp_entry.condition, opts.condition)
-            and matches(bp_entry.logMessage, opts.log_message)
-            and matches(bp_entry.hitCondition, opts.hit_condition)
+      for _, sign in pairs(buf_bp_signs.signs) do
+        local bp = bp_by_sign_by_buf[bufnr][sign.id] or {}
+        if (opts.lnum == nil or sign.lnum == opts.lnum)
+            and matches(bp.condition, opts.condition)
+            and matches(bp.logMessage, opts.log_message)
+            and matches(bp.hitCondition, opts.hit_condition)
         then
           table.insert(breakpoints, {
             buf = bufnr,
-            line = bp.lnum,
-            condition = bp_entry.condition,
-            hitCondition = bp_entry.hitCondition,
-            logMessage = bp_entry.logMessage,
-            state = bp_entry.state,
+            line = sign.lnum,
+            condition = bp.condition,
+            hitCondition = bp.hitCondition,
+            logMessage = bp.logMessage,
+            state = bp.state,
           })
         end
       end
