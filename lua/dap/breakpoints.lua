@@ -227,10 +227,40 @@ do
     end
     return result
   end
-end
-function M.clear()
-  vim.fn.sign_unplace(ns)
-  bp_by_sign_by_buf = {}
+
+  ---@param opts? BpFilterOpts
+  function M.clear(opts)
+    if opts == nil or next(opts) == nil then
+      vim.fn.sign_unplace(ns)
+      bp_by_sign_by_buf = {}
+      return
+    end
+
+    local signs = get_breakpoint_signs(opts.bufexpr)
+    for _, buf_bp_signs in pairs(signs) do
+      local bufnr = buf_bp_signs.bufnr
+      local bp_by_sign = bp_by_sign_by_buf[bufnr]
+      for _, sign in pairs(buf_bp_signs.signs) do
+        local bp = bp_by_sign and bp_by_sign[sign.id] or {}
+        if (opts.lnum == nil or sign.lnum == opts.lnum)
+            and matches(bp.condition, opts.condition)
+            and matches(bp.logMessage, opts.log_message)
+            and matches(bp.hitCondition, opts.hit_condition)
+        then
+          vim.fn.sign_unplace(ns, {
+            buffer = bufnr,
+            id = sign.id,
+          })
+          if bp_by_sign then
+            bp_by_sign[sign.id] = nil
+          end
+        end
+      end
+      if bp_by_sign and next(bp_by_sign) == nil then
+        bp_by_sign_by_buf[bufnr] = nil
+      end
+    end
+  end
 end
 
 do

@@ -57,6 +57,43 @@ describe('breakpoints', function()
     assert.are.same(expected, breakpoints.get({ log_message = true }))
   end)
 
+  it('can clear only logpoints', function()
+    local curbuf = api.nvim_get_current_buf()
+    api.nvim_buf_set_lines(curbuf, 0, -1, true, {"Hello", "World", "Foobar"})
+    breakpoints.set({ log_message = 'xs={xs}', bufnr = curbuf, lnum = 1 })
+    breakpoints.set({ log_message = 'xs={xs}', bufnr = curbuf, lnum = 2 })
+    breakpoints.set({ bufnr = curbuf, lnum = 3 })
+    breakpoints.clear({ log_message = true })
+    local expected = {
+      [curbuf] = {
+        {
+          buf = curbuf,
+          line = 3,
+        },
+      },
+    }
+    assert.are.same(expected, breakpoints.get())
+  end)
+
+  it('can clear all except logpoints', function()
+    local curbuf = api.nvim_get_current_buf()
+    api.nvim_buf_set_lines(curbuf, 0, -1, true, {"Hello", "World", "Foobar"})
+    breakpoints.set({ log_message = 'xs={xs}', bufnr = curbuf, lnum = 1 })
+    breakpoints.set({ condition = 'true', bufnr = curbuf, lnum = 2 })
+    breakpoints.set({ bufnr = curbuf, lnum = 3 })
+    breakpoints.clear({ log_message = false })
+    local expected = {
+      [curbuf] = {
+        {
+          buf = curbuf,
+          line = 1,
+          logMessage = 'xs={xs}',
+        },
+      },
+    }
+    assert.are.same(expected, breakpoints.get())
+  end)
+
   it('can remove a breakpoint', function()
     local lnum = api.nvim_win_get_cursor(0)[1]
     local curbuf = api.nvim_get_current_buf()
