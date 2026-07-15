@@ -790,35 +790,58 @@ terminate(opts),                                              *dap.terminate()*
                        in that case it terminates all root sessions including
                        all their children.
 
-
-set_breakpoint({condition}, {hit_condition}, {log_message})
-                                                          *dap.set_breakpoint()*
-
-        Same as |toggle_breakpoint|, but is guaranteed to overwrite previous 
+bp.set({opts})                                                    *dap.bp.set()*
+        Same as |bp.toggle|, but is guaranteed to overwrite previous
         breakpoint.
 
-toggle_breakpoint({condition}, {hit_condition}, {log_message})
-                                                       *dap.toggle_breakpoint()*
-
+bp.toggle({opts})                                              *dap.bp.toggle()*
         Creates or removes a breakpoint at the current line.
 
-        Parameters: ~
-            {condition}     Optional condition that must be met for the debugger
-                            to stop at the breakpoint.
-            {hit_condition} Optional hit condition, e.g. a number as a string
-                            that tells how often this breakpoint should be visited
-                            to stop.
-            {log_message}   Optional log message. This transforms the breakpoint 
-                            into a log point. Variable interpolation with {foo} is
-                            supported within the message.
+        Parameters:
+            {opts}  Optional table containing:
 
-list_breakpoints()                                     *dap.list_breakpoints()*
+                    - `bufnr:` `integer?`: Optional buffer number in which to
+                    place the breakpoint.
+                    - `lnum`: `integer?`: Optional line number at which to place
+                    the breakpoint.
+                    - `condition`: `string?`: Optional condition that must be met
+                    for the debugger to stop at the breakpoint.
+                    - `hit_condition`: `string?`: Optional hit condition, e.g., a
+                    number as a string that tells how often this breakpoint
+                    should be visited to stop.
+                    - `log_message`: `string?`: Optional log message. This
+                    transforms the breakpoint into a log point. Variable
+                    interpolation with {foo} is supported within the message.
 
-        Lists all breakpoints and log points in quickfix window.
+bp.list({opts})                                                  *dap.bp.list()*
+        Lists all breakpoints and log points matching the filter options in a
+        quickfix window.
 
-clear_breakpoints()                                   *dap.clear_breakpoints()*
+        If no options are passed, all breakpoints are listed.
 
-    Removes all breakpoints
+        Boolean filters:
+        - `nil`: do not filter
+        - `true`: field must be present and non-empty
+        - `false`: field must be absent or empty
+
+        Parameters:
+            {opts}  Optional table containing:
+
+                    - `bufnr:` `integer?`: Optional buffer number from which
+                    to list breakpoints.
+                    - `lnum`: `integer?`: Optional line number from which to
+                    list breakpoints.
+                    - `condition`: `boolean?`: Optional filter for conditional
+                    breakpoints.
+                    - `hit_condition`: `boolean?`: Optional filter for
+                    breakpoints with hit conditions.
+                    - `log_message`: `boolean?`: Optional filter for log points.
+
+bp.clear({opts})                                                *dap.bp.clear()*
+        Removes all breakpoints matching the filter options.
+
+        Filter options behave the same as for |bp.list|, passing no options
+        removes all breakpoints.
 
 set_exception_breakpoints({filters}, {exceptionOptions})
                                               *dap.set_exception_breakpoints()*

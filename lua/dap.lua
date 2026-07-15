@@ -1,5 +1,6 @@
 local api = vim.api
 local M = {}
+local M_bp = {}
 
 ---@diagnostic disable-next-line: deprecated
 local islist = vim.islist or vim.tbl_islist
@@ -983,6 +984,7 @@ function M.restart(config, opts)
 end
 
 
+---@deprecated Use bp.list instead
 ---@param openqf boolean?
 function M.list_breakpoints(openqf)
   local qf_list = lazy.breakpoints.to_qf_list(lazy.breakpoints.get())
@@ -1005,6 +1007,7 @@ function M.list_breakpoints(openqf)
   end
 end
 
+---@deprecated Use bp.set(opts) instead
 ---@param condition string?
 ---@param hit_condition string?
 ---@param log_message string?
@@ -1023,6 +1026,7 @@ local function broadcast(lsessions, fn)
 end
 
 
+---@deprecated Use bp.toggle instead
 ---@param condition string?
 ---@param hit_condition string?
 ---@param log_message string?
@@ -1057,6 +1061,7 @@ function M.toggle_breakpoint(condition, hit_condition, log_message, replace_old)
 end
 
 
+---@deprecated Use bp.clear instead
 function M.clear_breakpoints()
   local bps = lazy.breakpoints.get()
   for bufnr, _ in pairs(bps) do
@@ -1068,6 +1073,94 @@ function M.clear_breakpoints()
   end)
 end
 
+---@param openqf boolean?
+---@param opts? BpFilterOpts
+function M_bp.list(openqf, opts)
+  opts = opts or {}
+  -- Cache last used opts, used by bp.toggle when updating qflist
+  M_bp._list_opts = opts
+  local qf_list = lazy.breakpoints.to_qf_list(lazy.breakpoints.get(opts))
+  local current_qflist_title = vim.fn.getqflist({ title = 1 }).title
+  local action = ' '
+  if current_qflist_title == DAP_QUICKFIX_TITLE then
+    action = 'r'
+  end
+  vim.fn.setqflist({}, action, {
+    items = qf_list,
+    context = { DAP_QUICKFIX_CONTEXT },
+    title = DAP_QUICKFIX_TITLE
+  })
+  if openqf then
+    if #qf_list == 0 then
+      notify('No breakpoints set!', vim.log.levels.INFO)
+    else
+      api.nvim_command('copen')
+    end
+  end
+end
+
+--- @param opts? BpSetOpts
+function M_bp.set(opts)
+  ---@type BpToggleOpts
+  opts = opts or {}
+  opts.replace = true
+  M_bp.toggle(opts)
+end
+
+--- @param opts? BpToggleOpts
+function M_bp.toggle(opts)
+  opts = opts or {}
+  assert(
+    not opts.bufnr or type(opts.bufnr) == "integer",
+    "breakpoint buffer number must be an integer. Got: " .. vim.inspect(opts.bufnr)
+  )
+  assert(
+    not opts.lnum or type(opts.lnum) == "integer",
+    "breakpoint line number must be an integer. Got: " .. vim.inspect(opts.lnum)
+  )
+  assert(
+    not opts.condition or type(opts.condition) == "string",
+    "breakpoint condition must be a string. Got: " .. vim.inspect(opts.condition)
+  )
+  assert(
+    not opts.hit_condition or type(opts.hit_condition) == "string",
+    "breakpoint hit-condition must be a string. Got: " .. vim.inspect(opts.hit_condition)
+  )
+  assert(
+    not opts.log_message or type(opts.log_message) == "string",
+    "breakpoint log-message must be a string. Got: " .. vim.inspect(opts.log_message)
+  )
+  lazy.breakpoints.toggle(opts)
+  local bufnr = opts.bufnr or api.nvim_get_current_buf()
+  local bps = lazy.breakpoints.get({ bufexpr = bufnr })
+  broadcast(sessions, function(s)
+    s:set_breakpoints(bps)
+  end)
+  if vim.fn.getqflist({context = DAP_QUICKFIX_CONTEXT}).context == DAP_QUICKFIX_CONTEXT then
+    -- Use cached opts from currently open qflist
+    M_bp.list(false, M_bp._list_opts)
+  end
+end
+
+---@param opts? BpFilterOpts
+function M_bp.clear(opts)
+  local old_bps = lazy.breakpoints.get()
+  local new_bps = {}
+  lazy.breakpoints.clear2(opts)
+  if opts == nil or next(opts) == nil then
+    for bufnr, _ in pairs(old_bps) do
+      new_bps[bufnr] = {}
+    end
+  else
+    new_bps = lazy.breakpoints.get(opts)
+    for bufnr, _ in pairs(old_bps) do
+      new_bps[bufnr] = new_bps[bufnr] or {}
+    end
+  end
+  broadcast(sessions, function(lsession)
+    lsession:set_breakpoints(new_bps)
+  end)
+end
 
 -- setExceptionBreakpoints (https://microsoft.github.io/debug-adapter-protocol/specification#Requests_SetExceptionBreakpoints)
 --- filters: string[]
@@ -1404,5 +1497,5 @@ api.nvim_create_autocmd("ExitPre", {
   end
 })
 
-
+M.bp = M_bp
 return M
