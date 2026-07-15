@@ -124,10 +124,33 @@ function M.remove_by_id(id)
   end
 end
 
-function M.toggle(opts, bufnr, lnum)
+---@class BpSetOpts
+---@field bufnr? integer
+---@field lnum? integer
+---@field condition? string
+---@field log_message? string
+---@field hit_condition? string
+
+--- Sets a breakpoint
+---
+---@param opts? BpSetOpts
+function M.set(opts)
+  ---@type BpToggleOpts
   opts = opts or {}
-  bufnr = bufnr or api.nvim_get_current_buf()
-  lnum = lnum or api.nvim_win_get_cursor(0)[1]
+  opts.replace = true
+  M.toggle(opts)
+end
+
+---@class BpToggleOpts : BpSetOpts
+---@field replace? boolean
+
+--- Toggles a breakpoint
+---
+---@param opts? BpToggleOpts
+function M.toggle(opts)
+  opts = opts or {}
+  local bufnr = opts.bufnr or api.nvim_get_current_buf()
+  local lnum = opts.lnum or api.nvim_win_get_cursor(0)[1]
   if M.remove(bufnr, lnum) and not opts.replace then
     return
   end
@@ -154,11 +177,6 @@ function M.toggle(opts, bufnr, lnum)
   end
 end
 
-function M.set(opts, bufnr, lnum)
-  opts = opts or {}
-  opts.replace = true
-  M.toggle(opts, bufnr, lnum)
-end
 ---@class BpFilterOpts
 ---@field bufexpr? integer|string,
 ---@field lnum? integer,

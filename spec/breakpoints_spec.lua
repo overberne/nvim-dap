@@ -43,8 +43,8 @@ describe('breakpoints', function()
   it('can get a logpoint', function()
     local curbuf = api.nvim_get_current_buf()
     api.nvim_buf_set_lines(curbuf, 0, -1, true, {"Hello", "World"})
-    breakpoints.set({ log_message = 'xs={xs}' }, curbuf, 1)
-    breakpoints.set({ condition = 'true' }, curbuf, 2)
+    breakpoints.set({ log_message = 'xs={xs}', bufnr = curbuf, lnum = 1 })
+    breakpoints.set({ condition = 'true', bufnr = curbuf, lnum = 2 })
     local expected = {
       [curbuf] = {
         {
@@ -84,7 +84,7 @@ describe('breakpoints', function()
     local newbuf = api.nvim_create_buf(true, true)
     api.nvim_set_current_buf(newbuf)
     api.nvim_buf_set_lines(newbuf, 0, -1, true, {"Hello", "World"})
-    breakpoints.toggle({}, newbuf, 2)
+    breakpoints.toggle({ bufnr = newbuf, lnum = 2 })
     local expected = {
       [fstbuf] = {
         {

@@ -2124,7 +2124,7 @@ function Session.event_breakpoint(session, event)
     if bp.id then
       local bufnr = source_to_bufnr(session, bp.source)
       if bufnr then
-        breakpoints.set({}, bufnr, bp.line)
+        breakpoints.set({ bufnr = bufnr, lnum = bp.line })
         breakpoints.set_state(bufnr, bp)
       end
     end

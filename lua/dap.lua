@@ -1096,7 +1096,7 @@ function M.run_to_cursor()
   lazy.breakpoints.clear()
   local cur_bufnr = api.nvim_get_current_buf()
   local lnum = api.nvim_win_get_cursor(0)[1]
-  lazy.breakpoints.set({}, cur_bufnr, lnum)
+  lazy.breakpoints.set({ bufnr = cur_bufnr, lnum = lnum})
 
   local temp_bps = lazy.breakpoints.get({ bufexpr = cur_bufnr })
   for bufnr, _ in pairs(bps_before) do
@@ -1115,13 +1115,14 @@ function M.run_to_cursor()
     lazy.breakpoints.clear()
     for buf, buf_bps in pairs(bps_before) do
       for _, bp in pairs(buf_bps) do
-        local line = bp.line
         local opts = {
+          bufnr = buf,
+          lnum = bp.line,
           condition = bp.condition,
           log_message = bp.logMessage,
           hit_condition = bp.hitCondition
         }
-        lazy.breakpoints.set(opts, buf, line)
+        lazy.breakpoints.set(opts)
       end
     end
     lsession:set_breakpoints(bps_before, nil)

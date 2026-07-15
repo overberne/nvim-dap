@@ -53,7 +53,7 @@ describe('dap with debugpy', function()
     local bp_lnum = 8
     local bufnr = vim.fn.bufadd(program)
     vim.fn.bufload(bufnr)
-    breakpoints.set({}, bufnr, bp_lnum)
+    breakpoints.set({ bufnr = bufnr, lnum = bp_lnum })
     local events = {}
     local dummy_payload = nil
     dap.listeners.after.event_initialized['dap.tests'] = function(session)
