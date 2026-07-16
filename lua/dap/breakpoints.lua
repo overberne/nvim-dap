@@ -293,10 +293,15 @@ do
   end
 end
 
+--- Jump to next/prev breakpoint.
+---
+--- Returns false when no jump is available.
+---
 ---@param count? integer
+---@return boolean
 function M.jump(count)
   if count == 0 then
-    return
+    return true
   end
   count = count or 1
   local curbuf = api.nvim_get_current_buf()
@@ -319,7 +324,7 @@ function M.jump(count)
     end
   end
   if #targets == 0 then
-    return
+    return false
   end
   local direction = count > 0 and 1 or -1
   local start = 1
@@ -348,6 +353,7 @@ function M.jump(count)
   local index = ((start - 1 + offset) % #targets) + 1
   local target = targets[index]
   vim.fn.sign_jump(target.id, ns, target.bufnr)
+  return true
 end
 
 return M

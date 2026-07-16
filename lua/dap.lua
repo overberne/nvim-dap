@@ -1162,6 +1162,13 @@ function M_bp.clear(opts)
   end)
 end
 
+---@param count? integer
+function M_bp.jump(count)
+  if not lazy.breakpoints.jump(count) then
+    notify('No breakpoints to jump to...')
+  end
+end
+
 -- setExceptionBreakpoints (https://microsoft.github.io/debug-adapter-protocol/specification#Requests_SetExceptionBreakpoints)
 --- filters: string[]
 --- exceptionOptions: exceptionOptions?: ExceptionOptions[] (https://microsoft.github.io/debug-adapter-protocol/specification#Types_ExceptionOptions)
