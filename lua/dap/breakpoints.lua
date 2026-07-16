@@ -293,5 +293,61 @@ do
   end
 end
 
+---@param count? integer
+function M.jump(count)
+  if count == 0 then
+    return
+  end
+  count = count or 1
+  local curbuf = api.nvim_get_current_buf()
+  local curline = api.nvim_win_get_cursor(0)[1]
+  local targets = {}
+  local buffers = vim.tbl_keys(bp_by_sign_by_buf)
+  table.sort(buffers)
+  for _, bufnr in ipairs(buffers) do
+    local bp_by_sign = bp_by_sign_by_buf[bufnr]
+    local placed = vim.fn.sign_getplaced(bufnr, { group = ns })[1]
+    local signs = placed and placed.signs or {}
+    for _, sign in ipairs(signs) do
+      if bp_by_sign[sign.id] then
+        targets[#targets+1] = {
+          bufnr = bufnr,
+          id = sign.id,
+          lnum = sign.lnum,
+        }
+      end
+    end
+  end
+  if #targets == 0 then
+    return
+  end
+  local direction = count > 0 and 1 or -1
+  local start = 1
+  if direction > 0 then
+    for i, target in ipairs(targets) do
+      if target.bufnr > curbuf
+        or (target.bufnr == curbuf and target.lnum > curline)
+      then
+        start = i
+        break
+      end
+    end
+  else
+    start = #targets
+    for i = #targets, 1, -1 do
+      local target = targets[i]
+      if target.bufnr < curbuf
+        or (target.bufnr == curbuf and target.lnum < curline)
+      then
+        start = i
+        break
+      end
+    end
+  end
+  local offset = direction * (math.abs(count) - 1)
+  local index = ((start - 1 + offset) % #targets) + 1
+  local target = targets[index]
+  vim.fn.sign_jump(target.id, ns, target.bufnr)
+end
 
 return M
