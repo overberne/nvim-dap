@@ -279,9 +279,9 @@
 ---@field algorithm "MD5"|"SHA1"|"SHA256"|"timestamp"
 ---@field checksum string
 
+
 ---@class dap.SetBreakpointsResponse
 ---@field breakpoints dap.Breakpoint[]
-
 
 ---@class dap.SetBreakpointsArguments
 ---
@@ -291,7 +291,6 @@
 ---@field breakpoints? dap.SourceBreakpoint[]
 ---@field sourceModified? boolean
 
-
 ---@class dap.SourceBreakpoint
 ---@field line integer
 ---@field column? integer
@@ -299,6 +298,18 @@
 ---@field hitCondition? string
 ---@field logMessage? string
 ---@field mode? string
+
+
+---@class dap.SetFunctionBreakpointsResponse
+---@field breakpoints dap.Breakpoint
+
+---@class dap.SetFunctionBreakpointsArguments
+---@field breakpoints? dap.FunctionBreakpoint[]
+
+---@class dap.FunctionBreakpoint
+---@field name string
+---@field condition? string
+---@field hitCondition? string
 
 
 ---@class dap.Breakpoint

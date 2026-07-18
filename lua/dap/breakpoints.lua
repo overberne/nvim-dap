@@ -1,5 +1,6 @@
 local api = vim.api
 local non_empty = require('dap.utils').non_empty
+local utils = require('dap.utils')
 
 ---@class dap.bp
 ---@field buf integer
@@ -11,8 +12,19 @@ local non_empty = require('dap.utils').non_empty
 
 ---@type table<integer, table<integer, dap.bp>> buffer → sign id → bp
 local bp_by_sign_by_buf = {}
+
+---@class dap.bp.func
+---@field name string
+---@field condition string?
+---@field hitCondition string?
+---@field state dap.Breakpoint?
+
+---@type table<string, dap.bp.func>
+local func_bp_by_name = {}
+
 local ns = 'dap_breakpoints'
 local M = {}
+local M_func = {}
 
 
 ---@param bufexpr? string|integer
@@ -66,6 +78,13 @@ function M.update(breakpoint)
         end
         return
       end
+    end
+  end
+  for _, fbp in pairs(func_bp_by_name) do
+    if fbp.state and fbp.state.id == breakpoint.id then
+      fbp.state.verified = breakpoint.verified
+      fbp.state.message = breakpoint.message
+      return
     end
   end
 end
@@ -122,9 +141,15 @@ function M.remove_by_id(id)
       end
     end
   end
+  for name, fbp in pairs(func_bp_by_name) do
+    if fbp.state and fbp.state.id == id then
+      func_bp_by_name[name] = nil
+      return
+    end
+  end
 end
 
----@class BpSetOpts
+---@class dap.breakpoints.set.Opts
 ---@field bufnr? integer
 ---@field lnum? integer
 ---@field condition? string
@@ -133,20 +158,20 @@ end
 
 --- Sets a breakpoint
 ---
----@param opts? BpSetOpts
+---@param opts? dap.breakpoints.set.Opts
 function M.set(opts)
-  ---@type BpToggleOpts
+  ---@type dap.breakpoints.toggle.Opts
   opts = opts or {}
   opts.replace = true
   M.toggle(opts)
 end
 
----@class BpToggleOpts : BpSetOpts
+---@class dap.breakpoints.toggle.Opts : dap.breakpoints.set.Opts
 ---@field replace? boolean
 
 --- Toggles a breakpoint
 ---
----@param opts? BpToggleOpts
+---@param opts? dap.breakpoints.toggle.Opts
 function M.toggle(opts)
   opts = opts or {}
   local bufnr = opts.bufnr or api.nvim_get_current_buf()
@@ -177,25 +202,80 @@ function M.toggle(opts)
   end
 end
 
----@class BpFilterOpts
----@field bufexpr? integer|string,
----@field lnum? integer,
----@field condition? boolean,
----@field log_message? boolean,
----@field hit_condition? boolean,
+
+---@param name string
+---@param state dap.Breakpoint
+function M_func.set_state(name, state)
+    local fbp = func_bp_by_name[name]
+    if fbp then
+      fbp.state = state
+    end
+    if not state.verified then
+      utils.notify('Function breakpoint "' .. name .. '" rejected', vim.log.levels.ERROR)
+    end
+  end
+
+---@param name string
+---@return boolean
+function M_func.remove(name)
+  if func_bp_by_name[name] then
+    func_bp_by_name[name] = nil
+    return true
+  end
+  return false
+end
+
+
+---@class dap.breakpoints.func.set.Opts
+---@field condition? string
+---@field hit_condition? string
+
+---@param name string
+---@param opts? dap.breakpoints.func.set.Opts
+function M_func.set(name, opts)
+  ---@type dap.breakpoints.func.toggle.Opts
+  opts = opts or {}
+  opts.replace = true
+  M_func.toggle(name, opts)
+end
+
+
+---@class dap.breakpoints.func.toggle.Opts : dap.breakpoints.func.set.Opts
+---@field replace? boolean
+
+---@param name string
+---@param opts? dap.breakpoints.func.toggle.Opts
+function M_func.toggle(name, opts)
+  opts = opts or {}
+  if M_func.remove(name) and not opts.replace then
+    return
+  end
+  local bp = { ---@type dap.bp.func
+    name = name,
+    condition = opts.condition,
+    hitCondition = opts.hit_condition
+  }
+  func_bp_by_name[name] = bp
+end
 
 do
   local function matches(value, filter)
     return filter == nil or filter == (value ~= nil and value ~= "")
   end
 
+  ---@class dap.breakpoints.get.Opts
+  ---@field bufexpr? integer|string,
+  ---@field lnum? integer,
+  ---@field condition? boolean,
+  ---@field log_message? boolean,
+  ---@field hit_condition? boolean,
+
   --- Returns all breakpoints grouped by bufnr
   ---
-  ---@param opts? BpFilterOpts
+  ---@param opts? dap.breakpoints.get.Opts
   ---@return table<integer, dap.bp[]>
   function M.get(opts)
     opts = opts or {}
-
     local signs = get_breakpoint_signs(opts.bufexpr)
     if #signs == 0 then
       return {}
@@ -228,46 +308,88 @@ do
     return result
   end
 
-  ---@param opts? BpFilterOpts
+  ---@class dap.breakpoints.func.get.Opts
+  ---@field condition? boolean,
+  ---@field hit_condition? boolean,
+
+  ---@param opts? dap.breakpoints.func.get.Opts
+  ---@return dap.bp.func[]
+  function M_func.get(opts)
+    opts = opts or {}
+    local result = {}
+    for _, fbp in pairs(func_bp_by_name) do
+      if matches(fbp.condition, opts.condition)
+          and matches(fbp.hitCondition, opts.hit_condition)
+      then
+        table.insert(result, {
+          name = fbp.name,
+          condition = fbp.condition,
+          hitCondition = fbp.hitCondition,
+          state = fbp.state,
+        })
+      end
+    end
+    return result
+  end
+
+  ---@class dap.breakpoints.clear.Opts : dap.breakpoints.get.Opts
+  ---@field func? boolean,
+
+  ---@param opts? dap.breakpoints.clear.Opts
   function M.clear(opts)
     if opts == nil or next(opts) == nil then
       vim.fn.sign_unplace(ns)
       bp_by_sign_by_buf = {}
+      func_bp_by_name = {}
       return
     end
-
-    local signs = get_breakpoint_signs(opts.bufexpr)
-    for _, buf_bp_signs in pairs(signs) do
-      local bufnr = buf_bp_signs.bufnr
-      local bp_by_sign = bp_by_sign_by_buf[bufnr]
-      for _, sign in pairs(buf_bp_signs.signs) do
-        local bp = bp_by_sign and bp_by_sign[sign.id] or {}
-        if (opts.lnum == nil or sign.lnum == opts.lnum)
-            and matches(bp.condition, opts.condition)
-            and matches(bp.logMessage, opts.log_message)
-            and matches(bp.hitCondition, opts.hit_condition)
-        then
-          vim.fn.sign_unplace(ns, {
-            buffer = bufnr,
-            id = sign.id,
-          })
-          if bp_by_sign then
-            bp_by_sign[sign.id] = nil
+    if opts.func == nil or opts.func == false then
+      local signs = get_breakpoint_signs(opts.bufexpr)
+      for _, buf_bp_signs in pairs(signs) do
+        local bufnr = buf_bp_signs.bufnr
+        local bp_by_sign = bp_by_sign_by_buf[bufnr]
+        for _, sign in pairs(buf_bp_signs.signs) do
+          local bp = bp_by_sign and bp_by_sign[sign.id] or {}
+          if (opts.lnum == nil or sign.lnum == opts.lnum)
+              and matches(bp.condition, opts.condition)
+              and matches(bp.logMessage, opts.log_message)
+              and matches(bp.hitCondition, opts.hit_condition)
+          then
+            vim.fn.sign_unplace(ns, {
+              buffer = bufnr,
+              id = sign.id,
+            })
+            if bp_by_sign then
+              bp_by_sign[sign.id] = nil
+            end
           end
         end
+        if bp_by_sign and next(bp_by_sign) == nil then
+          bp_by_sign_by_buf[bufnr] = nil
+        end
       end
-      if bp_by_sign and next(bp_by_sign) == nil then
-        bp_by_sign_by_buf[bufnr] = nil
+    end
+    if opts.func == nil or opts.func then
+      for name, fbp in pairs(func_bp_by_name) do
+        if matches(fbp.condition, opts.condition)
+            and matches(fbp.hitCondition, opts.hit_condition)
+        then
+          func_bp_by_name[name] = nil
+        end
       end
     end
   end
 end
+
 
 do
   local function not_nil(x)
     return x ~= nil
   end
 
+  --- Function breakpoints are excluded from qflist. qflist is made
+  --- for jumping between breakpoints, function breakpoints have no location
+  --- in a buffer.
   function M.to_qf_list(breakpoints)
     local qf_list = {}
     for bufnr, buf_bps in pairs(breakpoints) do
@@ -315,7 +437,7 @@ function M.jump(count)
     local signs = placed and placed.signs or {}
     for _, sign in ipairs(signs) do
       if bp_by_sign[sign.id] then
-        targets[#targets+1] = {
+        targets[#targets + 1] = {
           bufnr = bufnr,
           id = sign.id,
           lnum = sign.lnum,
@@ -331,7 +453,7 @@ function M.jump(count)
   if direction > 0 then
     for i, target in ipairs(targets) do
       if target.bufnr > curbuf
-        or (target.bufnr == curbuf and target.lnum > curline)
+          or (target.bufnr == curbuf and target.lnum > curline)
       then
         start = i
         break
@@ -342,7 +464,7 @@ function M.jump(count)
     for i = #targets, 1, -1 do
       local target = targets[i]
       if target.bufnr < curbuf
-        or (target.bufnr == curbuf and target.lnum < curline)
+          or (target.bufnr == curbuf and target.lnum < curline)
       then
         start = i
         break
@@ -356,4 +478,5 @@ function M.jump(count)
   return true
 end
 
+M.func = M_func
 return M

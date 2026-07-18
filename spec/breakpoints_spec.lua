@@ -40,6 +40,16 @@ describe('breakpoints', function()
     assert.are.same(expected, breakpoints.get())
   end)
 
+  it('can set a function breakpoint', function()
+    breakpoints.func.toggle('foo', { replace = true })
+    local expected = {
+      {
+        name = 'foo'
+      },
+    }
+    assert.are.same(expected, breakpoints.func.get())
+  end)
+
   it('can get a logpoint', function()
     local curbuf = api.nvim_get_current_buf()
     api.nvim_buf_set_lines(curbuf, 0, -1, true, {"Hello", "World"})
@@ -143,6 +153,18 @@ describe('breakpoints', function()
     assert.are.same(expected, breakpoints.get())
   end)
 
+  it('can remove function breakpoint by name', function()
+    breakpoints.func.toggle('foo', { replace = true })
+    breakpoints.func.toggle('bar', { replace = true })
+    breakpoints.func.remove('bar')
+    local expected = {
+      {
+        name = 'foo'
+      },
+    }
+    assert.are.same(expected, breakpoints.func.get())
+  end)
+
   it('toggle adds bp if missing, otherwise removes', function()
     breakpoints.toggle()
     local buf = api.nvim_get_current_buf()
@@ -157,6 +179,18 @@ describe('breakpoints', function()
     assert.are.same(expected, breakpoints.get())
     breakpoints.toggle()
     assert.are.same({}, breakpoints.get())
+  end)
+
+  it('toggle adds function bp if missing, otherwise removes', function()
+    breakpoints.func.toggle('foo')
+    local expected = {
+      {
+        name = 'foo'
+      },
+    }
+    assert.are.same(expected, breakpoints.func.get())
+    breakpoints.func.toggle('foo')
+    assert.are.same({}, breakpoints.func.get())
   end)
 
   it('can convert breakpoints to qf_list items', function()

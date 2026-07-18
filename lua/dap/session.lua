@@ -327,14 +327,25 @@ function Session:event_initialized()
     end
   end
 
-  local bps = breakpoints.get()
-  self:set_breakpoints(bps, function()
+  local function set_exception_breakpoints()
     if self.capabilities.exceptionBreakpointFilters then
       self:set_exception_breakpoints(dap().defaults[self.config.type].exception_breakpoints, nil, on_done)
     else
       on_done()
     end
-  end)
+  end
+
+  local function set_function_breakpoints()
+    if self.capabilities.supportsFunctionBreakpoints then
+      local fbps = breakpoints.func.get()
+      self:set_function_breakpoints(fbps, set_exception_breakpoints)
+    else
+      on_done()
+    end
+  end
+
+  local bps = breakpoints.get()
+  self:set_breakpoints(bps, set_function_breakpoints)
 end
 
 
@@ -1016,6 +1027,48 @@ do
       end
       self:request('setBreakpoints', payload, on_response)
     end
+  end
+
+  ---@param fbps dap.bp.func[]
+  function Session:set_function_breakpoints(fbps, on_done)
+    if not self.capabilities.supportsFunctionBreakpoints then
+      utils.notify("Debug adapter doesn't support function breakpoints", vim.log.levels.INFO)
+      return
+    end
+    notify_if_missing_capability(fbps, self.capabilities)
+    ---@type dap.SetFunctionBreakpointsArguments
+    local payload = {
+      breakpoints = vim.tbl_map(
+        function(fbp)
+          -- trim extra information like the state
+          return {
+            name = fbp.name,
+            condition = fbp.condition,
+            hitCondition = fbp.hitCondition,
+          }
+        end,
+        fbps
+      ),
+    }
+    ---@param err1 dap.ErrorResponse
+    ---@param resp dap.SetFunctionBreakpointsResponse
+    local function on_response(err1, resp)
+      if err1 then
+        utils.notify('Error setting function breakpoints: ' .. tostring(err1), vim.log.levels.ERROR)
+      elseif resp then
+        for i, bp in ipairs(resp.breakpoints) do
+          local name = payload.breakpoints[i].name
+          breakpoints.func.set_state(name, bp)
+          if not bp.verified then
+            log:info('Function breakpoint "' .. name .. '" unverified', bp)
+          end
+        end
+      end
+      if on_done then
+        on_done()
+      end
+    end
+    self:request('setFunctionBreakpoints', payload, on_response)
   end
 end
 
@@ -2122,6 +2175,9 @@ function Session.event_breakpoint(session, event)
   elseif event.reason == 'new' then
     local bp = event.breakpoint
     if bp.id then
+      -- Cannot differentiate between breakpoint and function/data breakpoint,
+      -- assume it is always a normal breakpoint. Function/data will are
+      -- handled via responses to setFunctionBreakpoints/setDataBreakpoints.
       local bufnr = source_to_bufnr(session, bp.source)
       if bufnr then
         breakpoints.set({ bufnr = bufnr, lnum = bp.line })

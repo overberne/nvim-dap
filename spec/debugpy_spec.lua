@@ -54,6 +54,7 @@ describe('dap with debugpy', function()
     local bufnr = vim.fn.bufadd(program)
     vim.fn.bufload(bufnr)
     breakpoints.set({ bufnr = bufnr, lnum = bp_lnum })
+    breakpoints.func.set('main')
     local events = {}
     local dummy_payload = nil
     dap.listeners.after.event_initialized['dap.tests'] = function(session)
@@ -64,12 +65,16 @@ describe('dap with debugpy', function()
     dap.listeners.after.setBreakpoints['dap.tests'] = function(_, _, resp)
       events.setBreakpoints = resp
     end
-    dap.listeners.after.event_stopped['dap.tests'] = function(session)
+    dap.listeners.after.setFunctionBreakpoints['dap.tests'] = function(_, _, resp)
+      events.setFunctionBreakpoints = resp
+    end
+    dap.listeners.after.event_stopped['dap.tests'] = function(session, event)
       vim.wait(5000, function()
         return session.stopped_thread_id ~= nil
       end)
       dap.continue()
-      events.stopped = true
+      events.stops = events.stops or {}
+      table.insert(events.stops, event.reason)
     end
 
     -- force log creation now to not interfere with handle leak check
@@ -80,7 +85,7 @@ describe('dap with debugpy', function()
     local launch = spy.on(dap, 'launch')
     dap.run(config, { filetype = 'python' })
     helpers.wait(
-      function() return events.stopped end,
+      function() return events.stops and #events.stops == 2 end,
       function() return "Must hit breakpoints. Events: " .. vim.json.encode(events) end
     )
     assert.are.same({
@@ -88,7 +93,7 @@ describe('dap with debugpy', function()
       setBreakpoints = {
         breakpoints = {
           {
-            id = 0,
+            id = 1,
             line = bp_lnum,
             source = {
               name = 'example.py',
@@ -98,7 +103,19 @@ describe('dap with debugpy', function()
           },
         },
       },
-      stopped = true,
+      setFunctionBreakpoints = {
+        breakpoints = {
+          {
+            id = 0,
+            source = vim.empty_dict(),
+            verified = true,
+          },
+        },
+      },
+      stops = {
+        'function breakpoint',
+        'breakpoint',
+      },
     }, events)
 
     -- variable must expand to concrete value

@@ -1074,7 +1074,7 @@ function M.clear_breakpoints()
 end
 
 ---@param openqf boolean?
----@param opts? BpFilterOpts
+---@param opts? dap.breakpoints.get.Opts
 function M_bp.list(openqf, opts)
   opts = opts or {}
   -- Cache last used opts, used by bp.toggle when updating qflist
@@ -1099,15 +1099,21 @@ function M_bp.list(openqf, opts)
   end
 end
 
---- @param opts? BpSetOpts
+---@class dap.bp.set.Opts : dap.breakpoints.set.Opts
+---@field func? string
+
+---@param opts? dap.bp.set.Opts
 function M_bp.set(opts)
-  ---@type BpToggleOpts
+  ---@type dap.bp.toggle.Opts
   opts = opts or {}
   opts.replace = true
   M_bp.toggle(opts)
 end
 
---- @param opts? BpToggleOpts
+---@class dap.bp.toggle.Opts : dap.bp.set.Opts
+---@field replace? boolean
+
+---@param opts? dap.bp.toggle.Opts
 function M_bp.toggle(opts)
   opts = opts or {}
   assert(
@@ -1130,35 +1136,61 @@ function M_bp.toggle(opts)
     not opts.log_message or type(opts.log_message) == "string",
     "breakpoint log-message must be a string. Got: " .. vim.inspect(opts.log_message)
   )
-  lazy.breakpoints.toggle(opts)
-  local bufnr = opts.bufnr or api.nvim_get_current_buf()
-  local bps = lazy.breakpoints.get({ bufexpr = bufnr })
-  broadcast(sessions, function(s)
-    s:set_breakpoints(bps)
-  end)
+  if opts.func then
+    assert(
+      not opts.func or type(opts.func) == "string",
+      "breakpoint function name must be a string. Got: " .. vim.inspect(opts.func)
+    )
+    lazy.breakpoints.func.toggle(opts.func, {
+      condition = opts.condition,
+      hit_condition = opts.hit_condition,
+    })
+    local fbps = lazy.breakpoints.func.get()
+    broadcast(sessions, function(s)
+      s:set_function_breakpoints(fbps)
+    end)
+  else
+    lazy.breakpoints.toggle({
+      bufnr = opts.bufnr,
+      lnum = opts.lnum,
+      condition = opts.condition,
+      hit_condition = opts.hit_condition,
+      log_message = opts.log_message,
+    })
+    local bufnr = opts.bufnr or api.nvim_get_current_buf()
+    local bps = lazy.breakpoints.get({ bufexpr = bufnr })
+    broadcast(sessions, function(s)
+      s:set_breakpoints(bps)
+    end)
+  end
   if vim.fn.getqflist({context = DAP_QUICKFIX_CONTEXT}).context == DAP_QUICKFIX_CONTEXT then
     -- Use cached opts from currently open qflist
     M_bp.list(false, M_bp._list_opts)
   end
 end
 
----@param opts? BpFilterOpts
+---@param opts? dap.breakpoints.clear.Opts
 function M_bp.clear(opts)
   local old_bps = lazy.breakpoints.get()
   local new_bps = {}
-  lazy.breakpoints.clear2(opts)
+  lazy.breakpoints.clear(opts)
   if opts == nil or next(opts) == nil then
     for bufnr, _ in pairs(old_bps) do
       new_bps[bufnr] = {}
     end
   else
-    new_bps = lazy.breakpoints.get(opts)
+    new_bps = lazy.breakpoints.get()
     for bufnr, _ in pairs(old_bps) do
       new_bps[bufnr] = new_bps[bufnr] or {}
     end
   end
   broadcast(sessions, function(lsession)
-    lsession:set_breakpoints(new_bps)
+    local function clear_function_breakpoints()
+      if lsession.capabilities.supportsFunctionBreakpoints then
+        lsession:set_function_breakpoints({})
+      end
+    end
+    lsession:set_breakpoints(new_bps, clear_function_breakpoints)
   end)
 end
 
@@ -1193,6 +1225,7 @@ function M.run_to_cursor()
   end
 
   local bps_before = lazy.breakpoints.get()
+  local fbps_before = lazy.breakpoints.func.get()
   lazy.breakpoints.clear()
   local cur_bufnr = api.nvim_get_current_buf()
   local lnum = api.nvim_win_get_cursor(0)[1]
@@ -1225,7 +1258,20 @@ function M.run_to_cursor()
         lazy.breakpoints.set(opts)
       end
     end
-    lsession:set_breakpoints(bps_before, nil)
+    local function set_function_breakpoints()
+      if not lsession.capabilities.supportsFunctionBreakpoints then
+        return
+      end
+      for _, fbp in pairs(fbps_before) do
+        local opts = {
+          condition = fbp.condition,
+          hit_condition = fbp.hitCondition,
+        }
+        lazy.breakpoints.func.set(fbp.name, opts)
+      end
+      lsession:set_function_breakpoints(fbps_before)
+    end
+    lsession:set_breakpoints(bps_before, set_function_breakpoints)
   end
 
   M.listeners.before.event_stopped['dap.run_to_cursor'] = restore_breakpoints
