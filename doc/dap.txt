@@ -812,6 +812,8 @@ bp.toggle({opts})                                              *dap.bp.toggle()*
                     - `log_message`: `string?`: Optional log message. This
                     transforms the breakpoint into a log point. Variable
                     interpolation with {foo} is supported within the message.
+                    - `func`: `string?`: Optional function name. This
+                    transforms the breakpoint into a function breakpoint.
 
 bp.list({opts})                                                  *dap.bp.list()*
         Lists all breakpoints and log points matching the filter options in a
@@ -842,6 +844,20 @@ bp.clear({opts})                                                *dap.bp.clear()*
 
         Filter options behave the same as for |bp.list|, passing no options
         removes all breakpoints.
+        
+        Parameters:
+            {opts}  Optional table containing:
+
+                    - `bufnr:` `integer?`: Optional buffer number from which
+                    to list breakpoints.
+                    - `lnum`: `integer?`: Optional line number from which to
+                    list breakpoints.
+                    - `condition`: `boolean?`: Optional filter for conditional
+                    breakpoints.
+                    - `hit_condition`: `boolean?`: Optional filter for
+                    breakpoints with hit conditions.
+                    - `log_message`: `boolean?`: Optional filter for log points.
+                    - `func`: `boolean?`: Optional filter for function breakpoints.
 
 bp.jump([{count}])                                               *dap.bp.jump()
         Jumps to the next/prev breakpoint relative to the current cursor
