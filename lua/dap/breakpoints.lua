@@ -369,7 +369,7 @@ do
         end
       end
     end
-    if opts.func == nil or opts.func then
+    if opts.func == nil or opts.func and (opts.bufexpr == nil and opts.lnum == nil) then
       for name, fbp in pairs(func_bp_by_name) do
         if matches(fbp.condition, opts.condition)
             and matches(fbp.hitCondition, opts.hit_condition)
