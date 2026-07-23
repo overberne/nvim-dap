@@ -3,6 +3,7 @@ local non_empty = require('dap.utils').non_empty
 local utils = require('dap.utils')
 
 ---@class dap.bp
+---@field uid integer
 ---@field buf integer
 ---@field line integer
 ---@field condition string?
@@ -14,6 +15,7 @@ local utils = require('dap.utils')
 local bp_by_sign_by_buf = {}
 
 ---@class dap.bp.func
+---@field uid integer
 ---@field name string
 ---@field condition string?
 ---@field hitCondition string?
@@ -26,6 +28,11 @@ local ns = 'dap_breakpoints'
 local M = {}
 local M_func = {}
 
+local next_uid = 0
+local function new_uid()
+  next_uid = next_uid + 1
+  return next_uid
+end
 
 ---@param bufexpr? string|integer
 ---@return vim.fn.sign_getplaced.ret.item[]
@@ -180,6 +187,7 @@ function M.toggle(opts)
     return
   end
   local bp = { ---@type dap.bp
+    uid = new_uid(),
     buf = bufnr,
     line = lnum,
     condition = opts.condition,
@@ -251,6 +259,7 @@ function M_func.toggle(name, opts)
     return
   end
   local bp = { ---@type dap.bp.func
+    uid = new_uid(),
     name = name,
     condition = opts.condition,
     hitCondition = opts.hit_condition
@@ -292,6 +301,7 @@ do
             and matches(bp.hitCondition, opts.hit_condition)
         then
           table.insert(breakpoints, {
+            uid = bp.uid,
             buf = bufnr,
             line = sign.lnum,
             condition = bp.condition,
@@ -322,6 +332,7 @@ do
           and matches(fbp.hitCondition, opts.hit_condition)
       then
         table.insert(result, {
+          uid = fbp.uid,
           name = fbp.name,
           condition = fbp.condition,
           hitCondition = fbp.hitCondition,

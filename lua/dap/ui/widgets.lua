@@ -139,6 +139,17 @@ local function resizing_layer(win, buf)
 end
 
 
+M.breakpoints = {
+  new_buf = function()
+    local editor = require('dap.breakpoints_editor')
+    local buf = editor.new_buf()
+    return buf
+  end,
+  render = function ()
+  end
+}
+
+
 M.scopes = {
   refresh_listener = 'scopes',
   new_buf = function(view)

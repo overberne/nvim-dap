@@ -1016,16 +1016,6 @@ function M.set_breakpoint(condition, hit_condition, log_message)
 end
 
 
----@param lsessions table<integer, dap.Session>
----@param fn fun(lsession: dap.Session)
-local function broadcast(lsessions, fn)
-  for _, lsession in pairs(lsessions) do
-    fn(lsession)
-    broadcast(lsession.children, fn)
-  end
-end
-
-
 ---@deprecated Use bp.toggle instead
 ---@param condition string?
 ---@param hit_condition string?
@@ -1052,7 +1042,7 @@ function M.toggle_breakpoint(condition, hit_condition, log_message, replace_old)
   })
   local bufnr = api.nvim_get_current_buf()
   local bps = lazy.breakpoints.get({ bufexpr = bufnr })
-  broadcast(sessions, function(s)
+  lazy.utils.broadcast(sessions, function(s)
     s:set_breakpoints(bps)
   end)
   if vim.fn.getqflist({context = DAP_QUICKFIX_CONTEXT}).context == DAP_QUICKFIX_CONTEXT then
@@ -1068,7 +1058,7 @@ function M.clear_breakpoints()
     bps[bufnr] = {}
   end
   lazy.breakpoints.clear()
-  broadcast(sessions, function(lsession)
+  lazy.utils.broadcast(sessions, function(lsession)
     lsession:set_breakpoints(bps)
   end)
 end
@@ -1146,7 +1136,7 @@ function M_bp.toggle(opts)
       hit_condition = opts.hit_condition,
     })
     local fbps = lazy.breakpoints.func.get()
-    broadcast(sessions, function(s)
+    lazy.utils.broadcast(sessions, function(s)
       s:set_function_breakpoints(fbps)
     end)
   else
@@ -1159,7 +1149,7 @@ function M_bp.toggle(opts)
     })
     local bufnr = opts.bufnr or api.nvim_get_current_buf()
     local bps = lazy.breakpoints.get({ bufexpr = bufnr })
-    broadcast(sessions, function(s)
+    lazy.utils.broadcast(sessions, function(s)
       s:set_breakpoints(bps)
     end)
   end
@@ -1184,7 +1174,7 @@ function M_bp.clear(opts)
       new_bps[bufnr] = new_bps[bufnr] or {}
     end
   end
-  broadcast(sessions, function(lsession)
+  lazy.utils.broadcast(sessions, function(lsession)
     local function clear_function_breakpoints()
       if lsession.capabilities.supportsFunctionBreakpoints then
         lsession:set_function_breakpoints({})

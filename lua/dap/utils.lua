@@ -430,5 +430,13 @@ function M.splitstr(str)
   return lpeg.match(p, str)
 end
 
+---@param lsessions table<integer, dap.Session>
+---@param fn fun(lsession: dap.Session)
+function M.broadcast(lsessions, fn)
+  for _, lsession in pairs(lsessions) do
+    fn(lsession)
+    M.broadcast(lsession.children, fn)
+  end
+end
 
 return M
