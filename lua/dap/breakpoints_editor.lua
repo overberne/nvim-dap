@@ -1,8 +1,19 @@
+---How the editor works:
+---On buffer creation:
+---- Existing bps are rendered in the buffer, marks store references to bps
+---On save:
+---- Buffer is parsed
+---- Parsed is diffed with old bps
+---- Current bps are diffed with old bps
+---- Merge changes
+---- Show conflicts if any
+
 local api = vim.api
 local utils = require('dap.utils')
 local breakpoints = require('dap.breakpoints')
 
 local M = {}
+
 ---@type table<integer, table<integer, dap.bp|dap.bp.func>>
 local bp_by_mark_by_buf = {}
 
@@ -23,6 +34,16 @@ local valid_function_fields = {
 }
 local valid_breakpoint_fields_err = 'Invalid field name, expected `condition`, `hitCondition` or `logMessage`'
 local valid_function_fields_err = 'Invalid field name, expected `condition`, `hitCondition`'
+
+---@param bp dap.bp|dap.bp.func
+---@return string
+local function bp_key(bp)
+  return ('%s:%s:%s'):format(
+    bp.buf or '',
+    bp.line or '',
+    bp.name or ''
+  )
+end
 
 local function conceal_markers(bufnr)
   for _, winid in ipairs(vim.fn.win_findbuf(bufnr)) do
@@ -48,7 +69,7 @@ local function is_absolute(path)
   if vim.fs and vim.fs.is_absolute then
     return vim.fs.is_absolute(path)
   end
-  return path:sub(1, 1) == "/" or path:match('^%a:[/\\]') ~= nil
+  return path:sub(1, 1) == '/' or path:match('^%a:[/\\]') ~= nil
 end
 
 local function project_root()
@@ -188,22 +209,12 @@ local function buffer_for_path(path)
   return bufnr
 end
 
----@return integer?
-local function get_bp_id_from_mark(bufnr, lnum)
-  local row = lnum - 1
-  local marks = api.nvim_buf_get_extmarks(
-    bufnr,
-    marker_ns,
-    { row, 0 },
-    { row, -1 },
-    { details = true, limit = 1 }
-  )
-  return marks[1]
-      and bp_by_mark_by_buf[bufnr]
-      and bp_by_mark_by_buf[bufnr][marks[1][1]].uid
-      or nil
-end
 
+---@param line string
+---@param seen_sources table<string, boolean>
+---@param seen_functions table<string, boolean>
+---@param errors dap.breakpoints_editor.parse_error[]
+---@param lnum integer
 ---@return dap.bp|dap.bp.func?
 local function parse_header(line, seen_sources, seen_functions, errors, lnum)
   if vim.startswith(line, 'breakpoint') then
@@ -238,7 +249,7 @@ local function parse_header(line, seen_sources, seen_functions, errors, lnum)
     end
     return {
       buf = bufnr,
-      line = row,
+      line = tonumber(row),
     }
   elseif vim.startswith(line, 'function') then
     local name = line:match('function%s+(.+)$')
@@ -278,6 +289,8 @@ end
 
 ---@param line string
 ---@param bp dap.bp|dap.bp.func
+---@param errors dap.breakpoints_editor.parse_error[]
+---@param lnum integer
 local function parse_field(line, bp, errors, lnum)
   local field, value = line:match('^%s+(.*):%s*(.*)$')
   if not field or not value then
@@ -300,16 +313,25 @@ local function parse_field(line, bp, errors, lnum)
   bp[field] = clean_field_value(value)
 end
 
+
+---@class dap.breakpoints_editor.parse_error
+---@field lnum integer
+---@field message string
+
+---@param bufnr integer
+---@return dap.bp[]
+---@return dap.bp.func[]
+---@return dap.breakpoints_editor.parse_error[]
 local function parse(bufnr)
   local lines = api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local errors = {}
-  local seen_ids = {}
   local seen_sources = {}
   local seen_functions = {}
   local bps = {}
   local fbps = {}
   ---@type dap.bp|dap.bp.func?
   local bp = nil
+  ---@type dap.bp|dap.bp.func?
   for lnum, line in ipairs(lines) do
     line = trim_end(line)
     if line == '' then
@@ -330,17 +352,6 @@ local function parse(bufnr)
       if not new_bp then
         goto continue
       end
-      local id = get_bp_id_from_mark(bufnr, lnum)
-      if seen_ids[id] then
-        id = nil
-      elseif id then
-        seen_ids[id] = true
-      end
-      --uid can only be nil in the editor's parser, it means this
-      --is a new breakpoint in the buffer, do not want to
-      --make uid nullable in breakpoints module for obvious reasons.
-      ---@diagnostic disable-next-line assign-type-mismatch
-      new_bp.uid = id
       if bp then
         if bp.buf then
           table.insert(bps, bp)
@@ -390,24 +401,29 @@ end
 local function diff_breakpoints(bufnr, bps, fbps)
   ---@type dap.breakpoints_editor.bp_diff[]
   local diffs = {}
+  ---@type table<string, dap.bp|dap.bp.func>
   local old_bps = {}
   for _, bp in pairs(bp_by_mark_by_buf[bufnr]) do
-    old_bps[bp.uid] = bp
+    old_bps[bp_key(bp)] = bp
   end
   for _, bp in ipairs(bps) do
-    local old_bp = old_bps[bp.uid]
+    local key = bp_key(bp)
+    local old_bp = old_bps[key]
     if old_bp then
-      table.insert(diffs, { action = 'change', old = old_bp, new = bp })
-      old_bps[bp.uid] = nil
+      --Remove so we can determine which old bps are deleted
+      old_bps[key] = nil
+      if not compare_breakpoint(old_bp, bp) then
+        table.insert(diffs, { action = 'change', old = old_bp, new = bp })
+      end
     else
       table.insert(diffs, { action = 'new', new = bp })
     end
   end
   for _, bp in ipairs(fbps) do
-    local old_bp = old_bps[bp.uid]
+    local key = bp_key(bp)
+    local old_bp = old_bps[key]
     if old_bp then
-      --Remove so we can determine which old bps are deleted
-      old_bps[bp.uid] = nil
+      old_bps[key] = nil
       if not compare_breakpoint(old_bp, bp) then
         table.insert(diffs, { action = 'change', old = old_bp, new = bp })
       end
@@ -437,10 +453,10 @@ local function find_conflicts(editor_diffs, live_diffs)
   local take_live = {}
   ---@type dap.breakpoints_editor.bp_conflict[]
   local conflicts = {}
-  local live_by_id = {}
+  local live_diffs_by_key = {}
   for _, diff in ipairs(live_diffs) do
     if diff.action ~= 'new' then
-      live_by_id[diff.old.uid] = diff
+      live_diffs_by_key[bp_key(diff.old)] = diff
     end
   end
   for _, ediff in ipairs(editor_diffs) do
@@ -449,7 +465,7 @@ local function find_conflicts(editor_diffs, live_diffs)
       table.insert(take_live, ediff)
       goto continue
     end
-    local ldiff = live_by_id[ediff.old.uid]
+    local ldiff = live_diffs_by_key[bp_key(ediff.old)]
     if ediff.action == 'change' then
       if not ldiff then
         table.insert(take_editor, ediff)
@@ -761,35 +777,35 @@ function M.open(opts, buf)
   if not bp_by_mark or #bp_by_mark == 0 then
     return
   end
-  local bp_uid
+  local key
   if opts.curline then
     local bufnr = api.nvim_get_current_buf()
     local line = api.nvim_win_get_cursor(api.nvim_get_current_win())[1]
     local bps = breakpoints.get({ bufexpr = bufnr, lnum = line })[bufnr]
-    bp_uid = bps and bps[1] and bps[1].uid or nil
+    key = bps and bp_key(bps[1]) or nil
   elseif opts.bufnr then
     if not opts.lnum then
       return
     end
     local bps = breakpoints.get({ bufexpr = opts.bufnr, lnum = opts.lnum })[opts.bufnr]
-    bp_uid = bps and bps[1] and bps[1].uid or nil
+    key = bps and bp_key(bps[1]) or nil
   elseif opts.lnum then
     local bufnr = api.nvim_get_current_buf()
     local bps = breakpoints.get({ bufexpr = bufnr, lnum = opts.lnum })[bufnr]
-    bp_uid = bps and bps[1] and bps[1].uid or nil
+    key = bps and bp_key(bps[1]) or nil
   elseif opts.func then
-    local fbp = breakpoints.func.get({ name = opts.func })[1]
-    bp_uid = fbp.uid
+    local fbps = breakpoints.func.get({ name = opts.func })
+    key = fbps and bp_key(fbps[1]) or nil
   end
-  if not bp_uid then
+  if not key then
     return
   end
-  for mark_id, bp_id in ipairs(bp_by_mark) do
-    if bp_id == bp_uid then
+  for mark_id, bp in pairs(bp_by_mark) do
+    if bp_key(bp) == key then
       local mark = api.nvim_buf_get_extmark_by_id(buf, marker_ns, mark_id, {})
       if not mark then
         utils.notify(
-          'Mark associated with breakpoint' .. bp_uid .. ' no longer exists',
+          'Mark associated with breakpoint' .. key .. ' no longer exists',
           vim.log.levels.INFO
         )
         return
@@ -807,7 +823,7 @@ function M.save(bufnr)
     utils.notify('Unable to save, buffer ' .. bufnr .. ' does not exist', vim.log.levels.WARN)
     return
   end
-  local bps, fbps, errors = parse(bufnr)
+  local parsed_bps, parsed_fbps, errors = parse(bufnr)
   if #errors > 0 then
     local diagnostics = {}
     for _, err in ipairs(errors) do
@@ -822,8 +838,8 @@ function M.save(bufnr)
     vim.diagnostic.set(diagnostic_ns, bufnr, diagnostics)
     return
   end
-  local diffs = diff_breakpoints(bufnr, bps, fbps)
-  local live_bps = breakpoints.get()
+  local diffs = diff_breakpoints(bufnr, parsed_bps, parsed_fbps)
+  local live_bps = vim.iter(breakpoints.get()):flatten():totable()
   local live_fbps = breakpoints.func.get()
   local live_diffs = diff_breakpoints(bufnr, live_bps, live_fbps)
   local conflicts
