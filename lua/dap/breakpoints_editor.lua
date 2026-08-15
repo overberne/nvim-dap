@@ -670,6 +670,24 @@ local function apply_diffs(diffs)
   end
 end
 
+local function jump_to_breakpoint(bp)
+  local buf = vim.fn.bufnr(BUFFER_NAME)
+  if buf >= 0 and vim.bo[buf].modified then
+    utils.notify('Save breakpoints before jumping', vim.log.levels.ERROR)
+    return
+  end
+  if bp == nil then
+    bp = bp_by_lnum[vim.fn.line('.')]
+  end
+  if not bp or not bp.buf then
+    return
+  end
+  api.nvim_win_close(0, false)
+  api.nvim_win_set_buf(0, bp.buf)
+  api.nvim_win_set_cursor(0, { bp.line, 0 })
+  vim.cmd("normal! m'")
+end
+
 ---@return integer
 function M.new_buf()
   local bufnr = api.nvim_create_buf(false, true)
@@ -711,6 +729,7 @@ function M.new_buf()
       pcall(api.nvim_del_augroup_by_id, group)
     end,
   })
+  vim.keymap.set('n', '<CR>', jump_to_breakpoint, { buffer = bufnr })
   return bufnr
 end
 
