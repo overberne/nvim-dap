@@ -142,7 +142,10 @@ end
 M.breakpoints = {
   new_buf = function()
     local editor = require('dap.breakpoints_editor')
-    local buf = editor.new_buf()
+    local buf = vim.fn.bufnr(editor.buffer_name)
+    if buf < 0 then
+      buf = editor.new_buf()
+    end
     return buf
   end,
   render = function ()
