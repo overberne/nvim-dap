@@ -17,8 +17,8 @@ local M = {}
 
 ---Stores snapshots of breakpoints per open editor buffer.
 ---Snapshots created on buffer open/render
----@type table<integer, table<integer, dap.bp|dap.bp.func>>
-local bp_by_lnum_by_buf = {}
+---@type table<integer, dap.bp|dap.bp.func>
+local bp_by_lnum = {}
 
 local BUFFER_NAME = 'dap-breakpoints://editor'
 
@@ -121,8 +121,7 @@ local function append_optional_field(lines, label, value)
 end
 
 local function render(bufnr)
-  local bp_by_lnum = {}
-  bp_by_lnum_by_buf[bufnr] = bp_by_lnum
+  bp_by_lnum = {}
   local lines = {}
   local bps = breakpoints.get()
   local buffers = vim.tbl_keys(bps)
@@ -376,16 +375,15 @@ end
 ---@field old dap.bp|dap.bp.func?
 ---@field new dap.bp|dap.bp.func?
 
----@param bufnr integer
 ---@param bps dap.bp[]
 ---@param fbps dap.bp.func[]
 ---@return dap.breakpoints_editor.bp_diff[]
-local function diff_breakpoints(bufnr, bps, fbps)
+local function diff_breakpoints(bps, fbps)
   ---@type dap.breakpoints_editor.bp_diff[]
   local diffs = {}
   ---@type table<string, dap.bp|dap.bp.func>
   local old_bps = {}
-  for _, bp in pairs(bp_by_lnum_by_buf[bufnr]) do
+  for _, bp in pairs(bp_by_lnum) do
     old_bps[bp_key(bp)] = bp
   end
   for _, bp in ipairs(bps) do
@@ -545,7 +543,7 @@ end
 ---@param conflicts dap.breakpoints_editor.bp_conflict[]
 ---@return string
 local function get_conflicts_prompt(conflicts)
-  local lines = {'EDITOR CHANGES CONFLICT WITH LIVE CHANGES\n'}
+  local lines = { 'EDITOR CHANGES CONFLICT WITH LIVE CHANGES\n' }
   for _, conflict in ipairs(conflicts) do
     table.insert(lines, 'CONFLICT ' .. header_for(conflict.editor.old))
     local editor_fields, live_fields = diff_fields(conflict.editor.new, conflict.live.new)
@@ -605,7 +603,7 @@ end
 ---@param diffs dap.breakpoints_editor.bp_diff[]
 ---@return string
 local function get_diff_prompt(diffs)
-  local lines = {'CONFIRM BREAKPOINT CHANGES\n'}
+  local lines = { 'CONFIRM BREAKPOINT CHANGES\n' }
   for _, diff in ipairs(diffs) do
     if diff.action == 'new' then
       table.insert(lines, 'CREATE: ' .. header_for(diff.new))
@@ -709,7 +707,7 @@ function M.new_buf()
     buffer = bufnr,
     once = true,
     callback = function()
-      bp_by_lnum_by_buf[bufnr] = nil
+      bp_by_lnum = {}
       pcall(api.nvim_del_augroup_by_id, group)
     end,
   })
@@ -735,16 +733,17 @@ end
 ---  lnum?: integer,
 ---  func?: string,
 ---}?
----@param buf integer?
-function M.open(opts, buf)
-  if not buf then
+function M.open(opts)
+  local buf = vim.fn.bufnr(BUFFER_NAME)
+  if buf < 0 then
     buf = M.new_buf()
+    vim.cmd.tabnew()
+    vim.api.nvim_win_set_buf(0, buf)
   end
   if not opts then
     focus_buffer(buf)
     return
   end
-  local bp_by_lnum = bp_by_lnum_by_buf[buf]
   if not bp_by_lnum or #bp_by_lnum == 0 then
     return
   end
@@ -801,10 +800,10 @@ function M.save(bufnr)
     vim.diagnostic.set(diagnostic_ns, bufnr, diagnostics)
     return
   end
-  local diffs = diff_breakpoints(bufnr, parsed_bps, parsed_fbps)
+  local diffs = diff_breakpoints(parsed_bps, parsed_fbps)
   local live_bps = vim.iter(breakpoints.get()):flatten():totable()
   local live_fbps = breakpoints.func.get()
-  local live_diffs = diff_breakpoints(bufnr, live_bps, live_fbps)
+  local live_diffs = diff_breakpoints(live_bps, live_fbps)
   local conflicts
   diffs, live_diffs, conflicts = find_conflicts(diffs, live_diffs)
   if #conflicts > 0 then
