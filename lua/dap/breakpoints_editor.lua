@@ -120,6 +120,16 @@ local function append_optional_field(lines, label, value)
   end
 end
 
+---@param bp dap.bp|dap.bp.func
+local function header_for(bp)
+  if bp.buf then
+    local path = display_path(path_for_buffer(bp.buf))
+    return ('%s:%d'):format(path, bp.line)
+  else
+    return 'function ' .. bp.name
+  end
+end
+
 local function render(bufnr)
   bp_by_lnum = {}
   local lines = {}
@@ -135,7 +145,7 @@ local function render(bufnr)
       return a.line < b.line
     end)
     for _, bp in ipairs(buf_bps) do
-      lines[#lines + 1] = ('breakpoint %s:%d'):format(path, bp.line)
+      lines[#lines + 1] = header_for(bp)
       bp_by_lnum[#lines] = bp
       append_optional_field(lines, 'condition', bp.condition)
       append_optional_field(lines, 'hitCondition', bp.hitCondition)
@@ -147,7 +157,7 @@ local function render(bufnr)
     return a.name < b.name
   end)
   for _, fbp in ipairs(fbps) do
-    lines[#lines + 1] = 'function ' .. fbp.name
+    lines[#lines + 1] = header_for(fbp)
     bp_by_lnum[#lines] = fbp
     append_optional_field(lines, 'condition', fbp.condition)
     append_optional_field(lines, 'hitCondition', fbp.hitCondition)
@@ -198,12 +208,32 @@ end
 ---@param lnum integer
 ---@return dap.bp|dap.bp.func?
 local function parse_header(line, seen_sources, seen_functions, errors, lnum)
-  if vim.startswith(line, 'breakpoint') then
-    local path, row = line:match('breakpoint%s+(.+):(%d+)$')
+  if vim.startswith(line, 'function') then
+    local name = line:match('function%s+(.+)$')
+    if not name then
+      table.insert(errors, {
+        lnum = lnum,
+        message = 'Expected `function name`'
+      })
+      return nil
+    end
+    if seen_functions[name] then
+      table.insert(errors, {
+        lnum = lnum,
+        message = ('Duplicate function "%s"'):format(name)
+      })
+      return nil
+    end
+    seen_functions[name] = true
+    return {
+      name = name,
+    }
+  else -- Normal breakpoint
+    local path, row = line:match('(.+):(%d+)$')
     if not path or not row then
       table.insert(errors, {
         lnum = lnum,
-        message = 'Expected `breakpoint path:line`'
+        message = 'Expected `path:line`'
       })
       return nil
     end
@@ -232,32 +262,7 @@ local function parse_header(line, seen_sources, seen_functions, errors, lnum)
       buf = bufnr,
       line = tonumber(row),
     }
-  elseif vim.startswith(line, 'function') then
-    local name = line:match('function%s+(.+)$')
-    if not name then
-      table.insert(errors, {
-        lnum = lnum,
-        message = 'Expected `function name`'
-      })
-      return nil
-    end
-    if seen_functions[name] then
-      table.insert(errors, {
-        lnum = lnum,
-        message = ('Duplicate function "%s"'):format(name)
-      })
-      return nil
-    end
-    seen_functions[name] = true
-    return {
-      name = name,
-    }
   end
-  table.insert(errors, {
-    lnum = lnum,
-    message = 'Expected `breakpoint path:line` or `function name`'
-  })
-  return nil
 end
 
 local function clean_field_value(value)
@@ -323,7 +328,7 @@ local function parse(bufnr)
       if not bp then
         table.insert(errors, {
           lnum = lnum,
-          message = 'Expected `breakpoint path:line` or `function name`'
+          message = 'Expected `path:line` or `function name`'
         })
         goto continue
       end
@@ -472,24 +477,14 @@ local function find_conflicts(editor_diffs, live_diffs)
   return take_editor, take_live, conflicts
 end
 
----@param bp dap.bp|dap.bp.func
-local function header_for(bp)
-  if bp.buf then
-    local path = display_path(path_for_buffer(bp.buf))
-    return ('breakpoint %s:%d'):format(path, bp.line)
-  else
-    return 'function ' .. bp.name
-  end
-end
-
 ---
----CONFLICT breakpoint main.py:12
+---CONFLICT main.py:12
 ---editor: [(deleted)]
 ---  [condition: x]
 ---live: [(deleted)]
 ---  [condition: y]
 ---
----CHANGE breakpoint main.py:12
+---CHANGE main.py:12
 ---+ condition: x
 ---- condition: y
 ---~ condition: z
@@ -535,7 +530,7 @@ local function append_fields(lines, obj)
   end
   for key, value in pairs(obj) do
     if key ~= 'buf' and key ~= 'line' and key ~= 'name' then
-      lines[#lines + 1] = ('  %s: %s'):format(key, value)
+      lines[#lines + 1] = ('    %s: %s'):format(key, value)
     end
   end
 end
@@ -543,27 +538,26 @@ end
 ---@param conflicts dap.breakpoints_editor.bp_conflict[]
 ---@return string
 local function get_conflicts_prompt(conflicts)
-  local lines = { 'EDITOR CHANGES CONFLICT WITH LIVE CHANGES\n' }
+  local lines = { 'Cannot apply breakpoint changes.\n' }
   for _, conflict in ipairs(conflicts) do
-    table.insert(lines, 'CONFLICT ' .. header_for(conflict.editor.old))
+    table.insert(lines, 'CONFLICT ON ' .. header_for(conflict.editor.old))
     local editor_fields, live_fields = diff_fields(conflict.editor.new, conflict.live.new)
     if conflict.editor.action == 'change' and conflict.live.action == 'change' then
-      table.insert(lines, 'editor:')
+      table.insert(lines, '  editor:')
       append_fields(lines, editor_fields)
-      table.insert(lines, 'live:')
+      table.insert(lines, '  live:')
       append_fields(lines, live_fields)
     elseif conflict.editor.action == 'delete' then
-      table.insert(lines, 'editor: (deleted)')
-      table.insert(lines, 'live:')
+      table.insert(lines, '  editor: (deleted)')
+      table.insert(lines, '  live:')
       append_fields(lines, live_fields)
     else
-      table.insert(lines, 'editor:')
+      table.insert(lines, '  editor:')
       append_fields(lines, editor_fields)
-      table.insert(lines, 'live: (deleted)')
+      table.insert(lines, '  live: (deleted)')
     end
     table.insert(lines, '')
   end
-  table.remove(lines)
   return table.concat(lines, '\n')
 end
 
@@ -603,20 +597,41 @@ end
 ---@param diffs dap.breakpoints_editor.bp_diff[]
 ---@return string
 local function get_diff_prompt(diffs)
-  local lines = { 'CONFIRM BREAKPOINT CHANGES\n' }
+  local lines = { 'Apply breakpoint changes?\n' }
+  local created = 0
+  local changed = 0
+  local deleted = 0
   for _, diff in ipairs(diffs) do
     if diff.action == 'new' then
-      table.insert(lines, 'CREATE: ' .. header_for(diff.new))
+      table.insert(lines, 'CREATE ' .. header_for(diff.new))
       append_optional_field(lines, 'condition', diff.new.condition)
       append_optional_field(lines, 'hitCondition', diff.new.hitCondition)
       append_optional_field(lines, 'logMessage', diff.new.logMessage)
-    elseif diff.action == 'change' then
-      table.insert(lines, 'CHANGE: ' .. header_for(diff.old))
-      append_changed_fields(lines, diff)
-    else
-      table.insert(lines, 'DELETE: ' .. header_for(diff.old))
+      if diff.new.condition or diff.new.hitCondition or diff.new.logMessage then
+        table.insert(lines, '')
+      end
+      created = created + 1
     end
   end
+  for _, diff in ipairs(diffs) do
+    if diff.action == 'change' then
+      table.insert(lines, 'CHANGE ' .. header_for(diff.old))
+      append_changed_fields(lines, diff)
+      table.insert(lines, '')
+      changed = changed + 1
+    end
+  end
+  for _, diff in ipairs(diffs) do
+    if diff.action == 'delete' then
+      table.insert(lines, 'DELETE ' .. header_for(diff.old))
+      deleted = deleted + 1
+    end
+  end
+  if lines[#lines] ~= '' then
+    table.insert(lines, '')
+  end
+  local status = ('%d created, %d changed, %d deleted'):format(created, changed, deleted)
+  table.insert(lines, status)
   return table.concat(lines, '\n')
 end
 
@@ -759,8 +774,8 @@ function M.open(opts)
     vim.cmd.tabnew()
     vim.api.nvim_win_set_buf(0, buf)
   end
+  focus_buffer(buf)
   if not opts then
-    focus_buffer(buf)
     return
   end
   if not bp_by_lnum or #bp_by_lnum == 0 then
@@ -791,7 +806,6 @@ function M.open(opts)
   end
   for lnum, bp in pairs(bp_by_lnum) do
     if bp_key(bp) == key then
-      focus_buffer(buf)
       api.nvim_win_set_cursor(0, { lnum, 0 })
       return
     end
