@@ -1,10 +1,11 @@
 ---How the editor works:
 ---On buffer creation:
----- Existing bps are rendered in the buffer, marks store references to bps
+---- Render existing bps in buffer
+---- Store breakpoint positions so we can navigate to them.
 ---On save:
----- Buffer is parsed
----- Parsed is diffed with old bps
----- Current bps are diffed with old bps
+---- Parse buffer
+---- Diff parsed with old bps
+---- Diff current bps with old bps
 ---- Merge changes
 ---- Show conflicts if any
 
@@ -14,12 +15,13 @@ local breakpoints = require('dap.breakpoints')
 
 local M = {}
 
+---Stores snapshots of breakpoints per open editor buffer.
+---Snapshots created on buffer open/render
 ---@type table<integer, table<integer, dap.bp|dap.bp.func>>
-local bp_by_mark_by_buf = {}
+local bp_by_lnum_by_buf = {}
 
-local DAP_BREAKPOINTS_EDITOR = 'dap-breakpoints://editor'
+local BUFFER_NAME = 'dap-breakpoints://editor'
 
-local marker_ns = api.nvim_create_namespace('dap_breakpoints_editor_markers')
 local diagnostic_ns = api.nvim_create_namespace('dap_breakpoints_editor_diagnostics')
 local diagnostic_source = 'dap-breakpoints-editor'
 
@@ -43,15 +45,6 @@ local function bp_key(bp)
     bp.line or '',
     bp.name or ''
   )
-end
-
-local function conceal_markers(bufnr)
-  for _, winid in ipairs(vim.fn.win_findbuf(bufnr)) do
-    if vim.api.nvim_win_is_valid(winid) then
-      vim.wo[winid].conceallevel = 2
-      vim.wo[winid].concealcursor = 'nvic'
-    end
-  end
 end
 
 local function normalize_path(path)
@@ -128,8 +121,9 @@ local function append_optional_field(lines, label, value)
 end
 
 local function render(bufnr)
+  local bp_by_lnum = {}
+  bp_by_lnum_by_buf[bufnr] = bp_by_lnum
   local lines = {}
-  local markers = {}
   local bps = breakpoints.get()
   local buffers = vim.tbl_keys(bps)
   table.sort(buffers, function(a, b)
@@ -143,13 +137,10 @@ local function render(bufnr)
     end)
     for _, bp in ipairs(buf_bps) do
       lines[#lines + 1] = ('breakpoint %s:%d'):format(path, bp.line)
+      bp_by_lnum[#lines] = bp
       append_optional_field(lines, 'condition', bp.condition)
       append_optional_field(lines, 'hitCondition', bp.hitCondition)
       append_optional_field(lines, 'logMessage', bp.logMessage)
-      markers[#markers + 1] = {
-        row = #lines,
-        bp = bp,
-      }
     end
   end
   local fbps = breakpoints.func.get()
@@ -158,21 +149,12 @@ local function render(bufnr)
   end)
   for _, fbp in ipairs(fbps) do
     lines[#lines + 1] = 'function ' .. fbp.name
+    bp_by_lnum[#lines] = fbp
     append_optional_field(lines, 'condition', fbp.condition)
     append_optional_field(lines, 'hitCondition', fbp.hitCondition)
-    markers[#markers + 1] = {
-      row = #lines,
-      bp = fbp,
-    }
   end
   api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-  api.nvim_buf_clear_namespace(bufnr, marker_ns, 0, -1)
-  bp_by_mark_by_buf[bufnr] = {}
   vim.diagnostic.reset(diagnostic_ns, bufnr)
-  for _, marker in ipairs(markers) do
-    local mark_id = api.nvim_buf_set_extmark(bufnr, marker_ns, marker.row, 0, {})
-    bp_by_mark_by_buf[bufnr][mark_id] = marker.bp
-  end
 end
 
 local function refresh_if_clean(bufnr)
@@ -403,7 +385,7 @@ local function diff_breakpoints(bufnr, bps, fbps)
   local diffs = {}
   ---@type table<string, dap.bp|dap.bp.func>
   local old_bps = {}
-  for _, bp in pairs(bp_by_mark_by_buf[bufnr]) do
+  for _, bp in pairs(bp_by_lnum_by_buf[bufnr]) do
     old_bps[bp_key(bp)] = bp
   end
   for _, bp in ipairs(bps) do
@@ -518,10 +500,10 @@ end
 ---@param b dap.bp|dap.bp.func?
 local function diff_fields(a, b)
   if a == nil then
-    return b
+    return nil, b
   end
   if b == nil then
-    return a
+    return a, nil
   end
   local a_diff = {}
   local b_diff = {}
@@ -554,36 +536,34 @@ local function append_fields(lines, obj)
     return
   end
   for key, value in pairs(obj) do
-    if key == 'buf' then
-      key = 'path'
-      value = display_path(path_for_buffer(value))
+    if key ~= 'buf' and key ~= 'line' and key ~= 'name' then
+      lines[#lines + 1] = ('  %s: %s'):format(key, value)
     end
-    lines[#lines + 1] = ('  %s: %s'):format(key, value)
   end
 end
 
 ---@param conflicts dap.breakpoints_editor.bp_conflict[]
 ---@return string
 local function get_conflicts_prompt(conflicts)
-  local lines = {}
+  local lines = {'EDITOR CHANGES CONFLICT WITH LIVE CHANGES\n'}
   for _, conflict in ipairs(conflicts) do
     table.insert(lines, 'CONFLICT ' .. header_for(conflict.editor.old))
     local editor_fields, live_fields = diff_fields(conflict.editor.new, conflict.live.new)
     if conflict.editor.action == 'change' and conflict.live.action == 'change' then
       table.insert(lines, 'editor:')
-      append_fields(editor_fields)
+      append_fields(lines, editor_fields)
       table.insert(lines, 'live:')
-      append_fields(live_fields)
+      append_fields(lines, live_fields)
     elseif conflict.editor.action == 'delete' then
       table.insert(lines, 'editor: (deleted)')
       table.insert(lines, 'live:')
-      append_fields(live_fields)
+      append_fields(lines, live_fields)
     else
       table.insert(lines, 'editor:')
-      append_fields(editor_fields)
+      append_fields(lines, editor_fields)
       table.insert(lines, 'live: (deleted)')
     end
-    table.insert(lines, '\n')
+    table.insert(lines, '')
   end
   table.remove(lines)
   return table.concat(lines, '\n')
@@ -625,7 +605,7 @@ end
 ---@param diffs dap.breakpoints_editor.bp_diff[]
 ---@return string
 local function get_diff_prompt(diffs)
-  local lines = {}
+  local lines = {'CONFIRM BREAKPOINT CHANGES\n'}
   for _, diff in ipairs(diffs) do
     if diff.action == 'new' then
       table.insert(lines, 'CREATE: ' .. header_for(diff.new))
@@ -638,9 +618,7 @@ local function get_diff_prompt(diffs)
     else
       table.insert(lines, 'DELETE: ' .. header_for(diff.old))
     end
-    table.insert(lines, '\n')
   end
-  table.remove(lines)
   return table.concat(lines, '\n')
 end
 
@@ -697,7 +675,7 @@ end
 ---@return integer
 function M.new_buf()
   local bufnr = api.nvim_create_buf(false, true)
-  api.nvim_buf_set_name(bufnr, DAP_BREAKPOINTS_EDITOR)
+  api.nvim_buf_set_name(bufnr, BUFFER_NAME)
   vim.bo[bufnr].buftype = 'acwrite'
   vim.bo[bufnr].bufhidden = 'wipe'
   vim.bo[bufnr].swapfile = false
@@ -719,13 +697,6 @@ function M.new_buf()
       end
     end,
   })
-  api.nvim_create_autocmd('BufWinEnter', {
-    group = group,
-    buffer = bufnr,
-    callback = function()
-      conceal_markers(bufnr)
-    end,
-  })
   api.nvim_create_autocmd('BufEnter', {
     group = group,
     buffer = bufnr,
@@ -738,7 +709,7 @@ function M.new_buf()
     buffer = bufnr,
     once = true,
     callback = function()
-      bp_by_mark_by_buf[bufnr] = nil
+      bp_by_lnum_by_buf[bufnr] = nil
       pcall(api.nvim_del_augroup_by_id, group)
     end,
   })
@@ -773,8 +744,8 @@ function M.open(opts, buf)
     focus_buffer(buf)
     return
   end
-  local bp_by_mark = bp_by_mark_by_buf[buf]
-  if not bp_by_mark or #bp_by_mark == 0 then
+  local bp_by_lnum = bp_by_lnum_by_buf[buf]
+  if not bp_by_lnum or #bp_by_lnum == 0 then
     return
   end
   local key
@@ -800,18 +771,10 @@ function M.open(opts, buf)
   if not key then
     return
   end
-  for mark_id, bp in pairs(bp_by_mark) do
+  for lnum, bp in pairs(bp_by_lnum) do
     if bp_key(bp) == key then
-      local mark = api.nvim_buf_get_extmark_by_id(buf, marker_ns, mark_id, {})
-      if not mark then
-        utils.notify(
-          'Mark associated with breakpoint' .. key .. ' no longer exists',
-          vim.log.levels.INFO
-        )
-        return
-      end
       focus_buffer(buf)
-      api.nvim_win_set_cursor(0, { mark[1] + 1, 0 })
+      api.nvim_win_set_cursor(0, { lnum, 0 })
       return
     end
   end
@@ -846,7 +809,7 @@ function M.save(bufnr)
   diffs, live_diffs, conflicts = find_conflicts(diffs, live_diffs)
   if #conflicts > 0 then
     local msg = get_conflicts_prompt(conflicts)
-    local confirm_res = vim.fn.confirm(msg, '&Cancel\nTake &Editor\n&Take Live', 1, 'Question')
+    local confirm_res = vim.fn.confirm(msg, '&Cancel\nTake &Editor\nTake Live', 1, 'Question')
     if confirm_res == 0 or confirm_res == 1 then
       return
     elseif confirm_res == 3 then
@@ -860,10 +823,11 @@ function M.save(bufnr)
       return
     end
     apply_diffs(diffs)
-    --Render to refresh marks (new, changed, and deleted breakpoints)
+    --Render the updated breakpoints
     render(bufnr)
   end
   vim.bo[bufnr].modified = false
 end
 
+M.buffer_name = BUFFER_NAME
 return M
