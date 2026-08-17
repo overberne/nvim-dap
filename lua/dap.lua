@@ -439,8 +439,11 @@ end
 local signs = {
   DapBreakpoint = { text = "B", texthl = "SignColumn", linehl = "", numhl = "" },
   DapBreakpointCondition = { text = "C", texthl = "SignColumn", linehl = "", numhl = "" },
-  DapBreakpointRejected = { text = 'R', texthl = "SignColumn", linehl = '', numhl = '' },
   DapLogPoint = { text = 'L', texthl = "SignColumn", linehl = '', numhl = '' },
+  DapBreakpointDisabled = { text = "b", texthl = "SignColumn", linehl = "", numhl = "" },
+  DapBreakpointConditionDisabled = { text = "c", texthl = "SignColumn", linehl = "", numhl = "" },
+  DapLogPointDisabled = { text = 'l', texthl = "SignColumn", linehl = '', numhl = '' },
+  DapBreakpointRejected = { text = 'R', texthl = "SignColumn", linehl = '', numhl = '' },
   DapStopped = { text = '→', texthl = "SignColumn", linehl = 'debugPC', numhl = '' },
 }
 
@@ -1048,7 +1051,7 @@ function M.toggle_breakpoint(condition, hit_condition, log_message, replace_old)
     replace = replace_old
   })
   local bufnr = api.nvim_get_current_buf()
-  local bps = lazy.breakpoints.get({ bufexpr = bufnr })
+  local bps = lazy.breakpoints.get({ bufexpr = bufnr, disabled = false })
   lazy.utils.broadcast(sessions, function(s)
     s:set_breakpoints(bps)
   end)
@@ -1132,9 +1135,10 @@ function M_bp.toggle(opts)
     lazy.breakpoints.func.toggle(opts.func, {
       condition = opts.condition,
       hit_condition = opts.hit_condition,
+      disabled = opts.disabled,
       replace = opts.replace,
     })
-    local fbps = lazy.breakpoints.func.get()
+    local fbps = lazy.breakpoints.func.get({ disabled = false })
     lazy.utils.broadcast(sessions, function(s)
       s:set_function_breakpoints(fbps)
     end)
@@ -1146,19 +1150,20 @@ function M_bp.toggle(opts)
     assert(
       not opts.access_type
       or not (opts.access_type == "read" or opts.access_type == "write" or opts.access_type == "readWrite"),
-      'breakpoint access-type must be "read", "write", or "readWrite" Got: ' .. vim.inspect(opts.log_message)
+      'breakpoint access-type must be "read", "write", or "readWrite" Got: ' .. vim.inspect(opts.access_type)
     )
     assert(
       not opts.can_persist or type(opts.can_persist) == "boolean",
-      "breakpoint can-persist must be a boolean. Got: " .. vim.inspect(opts.log_message)
+      "breakpoint can-persist must be a boolean. Got: " .. vim.inspect(opts.can_persist)
     )
     lazy.breakpoints.data.toggle(opts.data_id, opts.access_type, {
       can_persist = opts.can_persist,
       condition = opts.condition,
       hit_condition = opts.hit_condition,
+      disabled = opts.disabled,
       replace = opts.replace,
     })
-    local dbps = lazy.breakpoints.data.get()
+    local dbps = lazy.breakpoints.data.get({ disabled = false })
     lazy.utils.broadcast(sessions, function (s)
       s:set_data_breakpoints(dbps)
     end)
@@ -1181,10 +1186,11 @@ function M_bp.toggle(opts)
       condition = opts.condition,
       hit_condition = opts.hit_condition,
       log_message = opts.log_message,
+      disabled = opts.disabled,
       replace = opts.replace,
     })
     local bufnr = opts.bufnr or api.nvim_get_current_buf()
-    local bps = lazy.breakpoints.get({ bufexpr = bufnr })
+    local bps = lazy.breakpoints.get({ bufexpr = bufnr, disabled = false })
     lazy.utils.broadcast(sessions, function(s)
       s:set_breakpoints(bps)
     end)
@@ -1210,7 +1216,8 @@ function M_bp.edit(opts)
     M_bp.set({
         func = opts.func,
         condition = opts.condition or fbp.condition,
-        hit_condition = opts.hit_condition or fbp.hitCondition
+        hit_condition = opts.hit_condition or fbp.hitCondition,
+        disabled = opts.disabled or fbp.disabled,
     })
   elseif opts.data_id then
     assert(
@@ -1220,7 +1227,7 @@ function M_bp.edit(opts)
     assert(
       not opts.access_type
       or not (opts.access_type == "read" or opts.access_type == "write" or opts.access_type == "readWrite"),
-      'breakpoint access-type must be "read", "write", or "readWrite" Got: ' .. vim.inspect(opts.log_message)
+      'breakpoint access-type must be "read", "write", or "readWrite" Got: ' .. vim.inspect(opts.access_type)
     )
     local dbp = lazy.breakpoints.data.get({
       data_id = opts.data_id,
@@ -1232,7 +1239,8 @@ function M_bp.edit(opts)
         access_type = opts.access_type,
         can_persist = opts.can_persist or dbp.canPersist,
         condition = opts.condition or dbp.condition,
-        hit_condition = opts.hit_condition or dbp.hitCondition
+        hit_condition = opts.hit_condition or dbp.hitCondition,
+        disabled = opts.disabled or dbp.disabled,
     })
   else
     assert(
@@ -1252,14 +1260,108 @@ function M_bp.edit(opts)
         lnum = lnum,
         condition = opts.condition or bp.condition,
         hit_condition = opts.hit_condition or bp.hitCondition,
-        log_message = opts.log_message or bp.logMessage
+        log_message = opts.log_message or bp.logMessage,
+        disabled = opts.disabled or bp.disabled,
     })
   end
 end
 
+---@class dap.bp.toggle_enabled.Opts
+---@field bufnr? integer
+---@field lnum? integer
+---@field func? string
+---@field data_id? string
+---@field access_type? string
+
+---@param opts? dap.bp.toggle_enabled.Opts
+function M_bp.toggle_enabled(opts)
+  opts = opts or {}
+  if opts.func then
+    assert(
+      type(opts.func) == "string",
+      "breakpoint function name must be a string. Got: " .. vim.inspect(opts.func)
+    )
+    local fbp = lazy.breakpoints.func.get({ name = opts.func })[1]
+    if not fbp then
+      return
+    end
+    M_bp.set({
+        func = opts.func,
+        condition = fbp.condition,
+        hit_condition = fbp.hitCondition,
+        disabled = not fbp.disabled or nil,
+    })
+  elseif opts.data_id then
+    assert(
+      type(opts.data_id) == "string",
+      "breakpoint data-id must be a string. Got: " .. vim.inspect(opts.data_id)
+    )
+    assert(
+      not opts.access_type
+      or not (opts.access_type == "read" or opts.access_type == "write" or opts.access_type == "readWrite"),
+      'breakpoint access-type must be "read", "write", or "readWrite" Got: ' .. vim.inspect(opts.access_type)
+    )
+    local dbp = lazy.breakpoints.data.get({
+      data_id = opts.data_id,
+      access_type = opts.access_type
+    })[1]
+    if not dbp then
+      return
+    end
+    M_bp.set({
+        data_id = opts.data_id,
+        access_type = opts.access_type,
+        can_persist = dbp.canPersist,
+        condition = dbp.condition,
+        hit_condition = dbp.hitCondition,
+        disabled = not dbp.disabled or nil,
+    })
+  else
+    assert(
+      not opts.bufnr or type(opts.bufnr) == "number" and opts.bufnr % 1 == 0,
+      "breakpoint buffer number must be an integer. Got: " .. vim.inspect(opts.bufnr)
+    )
+    assert(
+      not opts.lnum or type(opts.lnum) == "number" and opts.lnum % 1 == 0,
+      "breakpoint line number must be an integer. Got: " .. vim.inspect(opts.lnum)
+    )
+    local bufnr = opts.bufnr or api.nvim_get_current_buf()
+    local lnum = opts.lnum or api.nvim_win_get_cursor(0)[1]
+    local bp = lazy.breakpoints.get({ bufexpr = bufnr, lnum = lnum })
+    if not bp[bufnr] or not bp[bufnr][1] then
+      return
+    end
+    bp = bp[bufnr] and bp[bufnr][1] or {}
+    M_bp.set({
+        bufnr = bufnr,
+        lnum = lnum,
+        condition = bp.condition,
+        hit_condition = bp.hitCondition,
+        log_message = bp.logMessage,
+        disabled = not bp.disabled or nil,
+    })
+  end
+end
+
+---@param opts? dap.bp.toggle_enabled.Opts
+function M_bp.enable(opts)
+  ---@diagnostic disable-next-line: cast-type-mismatch
+  ---@cast opts dap.bp.set.Opts
+  opts.disabled = false
+  M_bp.edit(opts)
+end
+
+---@param opts? dap.bp.toggle_enabled.Opts
+function M_bp.disable(opts)
+  ---@diagnostic disable-next-line: cast-type-mismatch
+  ---@cast opts dap.bp.set.Opts
+  opts.disabled = true
+  M_bp.edit(opts)
+end
+
 ---@param opts? dap.breakpoints.clear.Opts
 function M_bp.clear(opts)
-  local old_bps = lazy.breakpoints.get()
+  local old_bps = lazy.breakpoints.get({ disabled = false })
   local new_bps = {}
   lazy.breakpoints.clear(opts)
   if opts == nil or next(opts) == nil then
@@ -1267,7 +1369,7 @@ function M_bp.clear(opts)
       new_bps[bufnr] = {}
     end
   else
-    new_bps = lazy.breakpoints.get()
+    new_bps = lazy.breakpoints.get({ disabled = false })
     for bufnr, _ in pairs(old_bps) do
       new_bps[bufnr] = new_bps[bufnr] or {}
     end
@@ -1275,16 +1377,16 @@ function M_bp.clear(opts)
   lazy.utils.broadcast(sessions, function(lsession)
     local function clear_function_breakpoints()
       if lsession.capabilities.supportsFunctionBreakpoints then
-        local new_fbps = lazy.breakpoints.func.get()
+        local new_fbps = lazy.breakpoints.func.get({ disabled = false })
         lsession:set_function_breakpoints(new_fbps)
       end
     end
     local function clear_data_breakpoints()
       if lsession.capabilities.supportsDataBreakpoints then
-        local new_dbps = lazy.breakpoints.data.get()
+        local new_dbps = lazy.breakpoints.data.get({ disabled = false })
         lsession:set_data_breakpoints(new_dbps, clear_function_breakpoints)
       else
-        clear_data_breakpoints()
+        clear_function_breakpoints()
       end
     end
     lsession:set_breakpoints(new_bps, clear_data_breakpoints)
@@ -1321,15 +1423,15 @@ function M.run_to_cursor()
     return
   end
 
-  local bps_before = lazy.breakpoints.get()
-  local fbps_before = lazy.breakpoints.func.get()
-  local dbps_before = lazy.breakpoints.data.get()
-  lazy.breakpoints.clear()
+  local bps_before = lazy.breakpoints.get({ disabled = false })
+  local fbps_before = lazy.breakpoints.func.get({ disabled = false })
+  local dbps_before = lazy.breakpoints.data.get({ disabled = false })
+  lazy.breakpoints.clear({ disabled = false })
   local cur_bufnr = api.nvim_get_current_buf()
   local lnum = api.nvim_win_get_cursor(0)[1]
-  lazy.breakpoints.set({ bufnr = cur_bufnr, lnum = lnum})
+  lazy.breakpoints.set({ bufnr = cur_bufnr, lnum = lnum })
 
-  local temp_bps = lazy.breakpoints.get({ bufexpr = cur_bufnr })
+  local temp_bps = lazy.breakpoints.get({ bufexpr = cur_bufnr, disabled = false })
   for bufnr, _ in pairs(bps_before) do
     if bufnr ~= cur_bufnr then
       temp_bps[bufnr] = {}
@@ -1341,21 +1443,6 @@ function M.run_to_cursor()
   end
 
   local function restore_breakpoints()
-    M.listeners.before.event_stopped['dap.run_to_cursor'] = nil
-    M.listeners.before.event_terminated['dap.run_to_cursor'] = nil
-    lazy.breakpoints.clear()
-    for buf, buf_bps in pairs(bps_before) do
-      for _, bp in pairs(buf_bps) do
-        local opts = {
-          bufnr = buf,
-          lnum = bp.line,
-          condition = bp.condition,
-          log_message = bp.logMessage,
-          hit_condition = bp.hitCondition
-        }
-        lazy.breakpoints.set(opts)
-      end
-    end
     local function set_function_breakpoints()
       if not lsession.capabilities.supportsFunctionBreakpoints then
         return
@@ -1364,6 +1451,7 @@ function M.run_to_cursor()
         local opts = {
           condition = fbp.condition,
           hit_condition = fbp.hitCondition,
+          disabled = fbp.disabled,
         }
         lazy.breakpoints.func.set(fbp.name, opts)
       end
@@ -1379,10 +1467,27 @@ function M.run_to_cursor()
           condition = dbp.condition,
           hit_condition = dbp.hitCondition,
           can_persist = dbp.canPersist,
+          disabled = dbp.disabled,
         }
         lazy.breakpoints.data.set(dbp.dataId, dbp.accessType, opts)
       end
       lsession:set_data_breakpoints(dbps_before, set_function_breakpoints)
+    end
+    M.listeners.before.event_stopped['dap.run_to_cursor'] = nil
+    M.listeners.before.event_terminated['dap.run_to_cursor'] = nil
+    lazy.breakpoints.clear({ disabled = false })
+    for buf, buf_bps in pairs(bps_before) do
+      for _, bp in pairs(buf_bps) do
+        local opts = {
+          bufnr = buf,
+          lnum = bp.line,
+          condition = bp.condition,
+          log_message = bp.logMessage,
+          hit_condition = bp.hitCondition,
+          disabled = bp.disabled,
+        }
+        lazy.breakpoints.set(opts)
+      end
     end
     lsession:set_breakpoints(bps_before, set_data_breakpoints)
   end

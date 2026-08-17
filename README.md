@@ -47,6 +47,7 @@ A typical debug flow consists of:
     - `:DapShowBreakpoints` - same as above.
     - `:DapEditBreakpoint` - opens the breakpoint under the cursor in the editor.
     - `:lua require'dap'.bp.edit()` - update fields of a specific breakpoint.
+    - `:DapToggleBreakpointEnabled` - toggles the enabled state of a breakpoint
 - Launching debug sessions and resuming execution via `:DapNew` and
   `:DapContinue` or `:lua require'dap'.continue()`.
 - Stepping through code via `:DapStepOver`, `:DapStepInto` or the corresponding

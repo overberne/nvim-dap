@@ -326,7 +326,7 @@ local function actions_from_info(info)
         local session = require('dap').session()
         breakpoints.data.toggle(info.dataId)
         if session and session.capabilities.supportsDataBreakpoints then
-          session:set_data_breakpoints(breakpoints.data.get())
+          session:set_data_breakpoints(breakpoints.data.get({ disabled = false }))
         end
       end
     }}
@@ -340,7 +340,7 @@ local function actions_from_info(info)
         local session = require('dap').session()
         breakpoints.data.toggle(info.dataId, access_type)
         if session and session.capabilities.supportsDataBreakpoints then
-          session:set_data_breakpoints(breakpoints.data.get())
+          session:set_data_breakpoints(breakpoints.data.get({ disabled = false }))
         end
       end,
     })

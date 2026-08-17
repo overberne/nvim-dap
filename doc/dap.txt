@@ -455,6 +455,9 @@ nvim-dap uses five signs:
 - `DapBreakpoint` for breakpoints (default: `B`)
 - `DapBreakpointCondition` for conditional breakpoints (default: `C`)
 - `DapLogPoint` for log points (default: `L`)
+- `DapBreakpointDisabled` for disabled breakpoints (default: `b`)
+- `DapBreakpointConditionDisabled` for disabled conditional breakpoints (default: `c`)
+- `DapLogPointDisabled` for disabled log points (default: `l`)
 - `DapStopped` to indicate where the debugee is stopped (default: `→`)
 - `DapBreakpointRejected` to indicate breakpoints rejected by the debug
   adapter (default: `R`)
@@ -553,6 +556,10 @@ Breakpoints:
 - `DapToggleBreakpoint` : Set or remove a breakpoint at the current line
 - `DapEditBreakpoint` : Edit a breakpoint at the current line in the
   breakpoints editor.
+- `DapToggleBreakpointEnabled` : Toggle the enabled state of a breakpoint at
+  the current line
+- `DapEnableBreakpoint` : Enable a breakpoint at the current line
+- `DapDisableBreakpoint` : Disable a breakpoint at the current line
 - `DapShowBreakpoints` : Open the breakpoints editor
 - `DapNextBreakpoints` : Jump to the next breakpoint, if any
 - `DapPrevBreakpoints` : Jump to the previous breakpoint, if any
@@ -829,6 +836,29 @@ bp.toggle({opts})                                              *dap.bp.toggle()*
                     breakpoints. Can be "read", "write" or "readWrite".
                     - `can_persist`: `boolean?`: Optional flag for persisting
                     data booleans beyond their lifetimes.
+                    - `disabled`: `boolean?`: Optional flag for disabling a
+                    breakpoint.
+
+bp.toggle_enabled({opts})                              *dap.bp.toggle_enabled()*
+        Toggles the enabled state of a breakpoint at the current line.
+        
+        Parameters:
+            {opts}  Optional table containing:
+
+                    - `bufnr:` `integer?`: Optional buffer number in which to
+                    toggle the breakpoint.
+                    - `lnum`: `integer?`: Optional line number at which to
+                    toggle the breakpoint.
+                    - `func`: `string?`: Optional function name.
+                    - `data_id`: `string?`: Optional data id.
+                    - `access_type`: `string?`: Optional access-type for data
+                    breakpoints. Can be "read", "write" or "readWrite".
+
+bp.enable({opts})                                              *dap.bp.enable()*
+        Same as |bp.toggle_enabled|, but enables a breakpoint.
+
+bp.disable({opts})                                            *dap.bp.disable()*
+        Same as |bp.toggle_enabled|, but disables a breakpoint.
 
 bp.list({opts})                                                  *dap.bp.list()*
         Lists all breakpoints and log points matching the filter options in a
@@ -1103,8 +1133,9 @@ repl.close()                                                  *dap.repl.close()*
 repl.execute({text})                                        *dap.repl.execute()*
         Add and execute text as if entered directly
 
-breakpoints_editor.open({opts})                  *dap.breakpoints_editor.open()*
+bp_editor.open({opts})                                    *dap.bp_editor.open()*
         Open a the breakpoints buffer in a new tab.
+        Use `<CR>` to navigate to the breakpoint on the current line.
         Use `:w` to save changes to the breakpoints.
         If conflicting changes have been applied outside of the editor
         the user will be prompted to resolve conflicts.
@@ -1114,6 +1145,7 @@ breakpoints_editor.open({opts})                  *dap.breakpoints_editor.open()*
               condition: foo == true
               hitCondition: 5
               logMessage: got here
+              disabled: true
             function malloc
               condition: true
               hitCondition: 10

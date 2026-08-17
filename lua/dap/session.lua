@@ -337,7 +337,7 @@ function Session:event_initialized()
 
   local function set_function_breakpoints()
     if self.capabilities.supportsFunctionBreakpoints then
-      local fbps = breakpoints.func.get()
+      local fbps = breakpoints.func.get({ disabled = false })
       self:set_function_breakpoints(fbps, set_exception_breakpoints)
     else
       set_exception_breakpoints()
@@ -346,14 +346,14 @@ function Session:event_initialized()
 
   local function set_data_breakpoints()
     if self.capabilities.supportsDataBreakpoints then
-      local dbps = breakpoints.data.get({ can_persist = true })
+      local dbps = breakpoints.data.get({ can_persist = true, disabled = false })
       self:set_data_breakpoints(dbps, set_function_breakpoints)
     else
       set_function_breakpoints()
     end
   end
 
-  local bps = breakpoints.get()
+  local bps = breakpoints.get({ disabled = false })
   self:set_breakpoints(bps, set_data_breakpoints)
 end
 

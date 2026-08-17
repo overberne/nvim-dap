@@ -30,18 +30,21 @@ local valid_breakpoint_fields = {
   condition    = true,
   hitCondition = true,
   logMessage   = true,
+  disabled     = true,
 }
 local valid_function_fields = {
   condition    = true,
   hitCondition = true,
+  disabled     = true,
 }
 local valid_data_fields = {
   condition    = true,
   hitCondition = true,
+  disabled     = true,
 }
-local valid_breakpoint_fields_err = 'Invalid field name, expected `condition`, `hitCondition` or `logMessage`'
-local valid_function_fields_err = 'Invalid field name, expected `condition`, `hitCondition`'
-local valid_data_fields_err = 'Invalid field name, expected `condition`, `hitCondition`'
+local valid_breakpoint_fields_err = 'Invalid field name, expected `condition`, `hitCondition`, `logMessage`, or `disabled`'
+local valid_function_fields_err = 'Invalid field name, expected `condition`, `hitCondition`, or `disabled`'
+local valid_data_fields_err = 'Invalid field name, expected `condition`, `hitCondition`, or `disabled`'
 
 ---@param bp dap.bp|dap.bp.func|dap.bp.data
 ---@return string
@@ -207,6 +210,7 @@ local function render(bufnr)
     append_optional_field(lines, 'condition', bp.condition)
     append_optional_field(lines, 'hitCondition', bp.hitCondition)
     append_optional_field(lines, 'logMessage', bp.logMessage)
+    append_optional_field(lines, 'disabled', bp.disabled)
   end
   api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
   if #diagnostics > 0 then
@@ -290,7 +294,7 @@ local function parse_header(line, seen_sources, seen_functions, seen_data, error
       })
       return nil
     end
-    if access_type and not (access_type == 'read' or access_type == 'write' or access_type == 'readWrite') then
+    if access_type and access_type ~= 'read' and access_type ~= 'write' and access_type ~= 'readWrite' then
       table.insert(errors, {
         lnum = lnum,
         message = 'AccessType must be "read", "write", or "readWrite".'
@@ -386,10 +390,20 @@ local function parse_field(line, bp, errors, lnum)
   end
   value = clean_field_value(value)
   if field == 'canPersist' then
-    if not (value == 'true' or value == 'false') then
+    if value ~= 'true' and value ~= 'false' then
       table.insert(errors, {
         lnum = lnum,
         message = ('Field `canPersist` must be `true` or `false`'):format(field)
+      })
+      return
+    end
+    value = value == 'true'
+  end
+  if field == 'disabled' then
+    if value ~= 'true' and value ~= 'false' then
+      table.insert(errors, {
+        lnum = lnum,
+        message = ('Field `disabled` must be `true` or `false`'):format(field)
       })
       return
     end
@@ -712,6 +726,7 @@ local function get_diff_prompt(diffs)
       append_optional_field(lines, 'condition', diff.new.condition)
       append_optional_field(lines, 'hitCondition', diff.new.hitCondition)
       append_optional_field(lines, 'logMessage', diff.new.logMessage)
+      append_optional_field(lines, 'disabled', diff.new.disabled)
       if diff.new.condition or diff.new.hitCondition or diff.new.logMessage then
         table.insert(lines, '')
       end
@@ -766,37 +781,40 @@ local function apply_diffs(diffs)
           condition = new.condition,
           hit_condition = new.hitCondition,
           log_message = new.logMessage,
+          disabled = new.disabled,
         })
       elseif new.name then
         functions_changed = true
         breakpoints.func.set(new.name, {
           condition = new.condition,
           hit_condition = new.hitCondition,
+          disabled = new.disabled,
         })
       elseif new.dataId then
         data_changed = true
         breakpoints.data.set(new.dataId, new.accessType, {
           condition = new.condition,
           hit_condition = new.hitCondition,
+          disabled = new.disabled,
         })
       end
     end
   end
   local sessions = require('dap').sessions()
   for buf in pairs(buffers) do
-    local bps = breakpoints.get({ bufexpr = buf })
+    local bps = breakpoints.get({ bufexpr = buf, disabled = false })
     utils.broadcast(sessions, function(s)
       s:set_breakpoints(bps)
     end)
   end
   if functions_changed then
-    local fbps = breakpoints.func.get()
+    local fbps = breakpoints.func.get({ disabled = false })
     utils.broadcast(sessions, function(s)
       s:set_function_breakpoints(fbps)
     end)
   end
   if data_changed then
-    local dbps = breakpoints.data.get()
+    local dbps = breakpoints.data.get({ disabled = false })
     utils.broadcast(sessions, function(s)
       s:set_data_breakpoints(dbps)
     end)

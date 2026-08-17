@@ -8,6 +8,7 @@ local utils = require('dap.utils')
 ---@field condition string?
 ---@field logMessage string?
 ---@field hitCondition string?
+---@field disabled boolean?
 ---@field state dap.Breakpoint?
 
 ---@type table<integer, table<integer, dap.bp>> buffer → sign id → bp
@@ -17,6 +18,7 @@ local bp_by_sign_by_buf = {}
 ---@field name string
 ---@field condition string?
 ---@field hitCondition string?
+---@field disabled boolean?
 ---@field state dap.Breakpoint?
 
 ---@type table<string, dap.bp.func>
@@ -28,6 +30,7 @@ local func_bp_by_name = {}
 ---@field condition string?
 ---@field hitCondition string?
 ---@field canPersist boolean?
+---@field disabled boolean?
 ---@field state dap.Breakpoint?
 
 ---@type table<string, table<dap.DataBreakpointAccessType | "", dap.bp.data>>
@@ -58,6 +61,15 @@ end
 
 ---@param bp dap.bp
 local function get_sign_name(bp)
+  if bp.disabled then
+    if non_empty(bp.condition) then
+      return 'DapBreakpointConditionDisabled'
+    elseif non_empty(bp.logMessage) then
+      return 'DapLogPointDisabled'
+    else
+      return 'DapBreakpointDisabled'
+    end
+  end
   if bp.state and bp.state.verified == false then
     return 'DapBreakpointRejected'
   elseif non_empty(bp.condition) then
@@ -187,6 +199,7 @@ end
 ---@field condition? string
 ---@field log_message? string
 ---@field hit_condition? string
+---@field disabled? boolean
 
 --- Sets a breakpoint
 ---
@@ -216,7 +229,8 @@ function M.toggle(opts)
     line = lnum,
     condition = opts.condition,
     logMessage = opts.log_message,
-    hitCondition = opts.hit_condition
+    hitCondition = opts.hit_condition,
+    disabled = opts.disabled,
   }
   local sign_name = get_sign_name(bp)
   local sign_id = vim.fn.sign_place(
@@ -261,6 +275,7 @@ end
 ---@class dap.breakpoints.func.set.Opts
 ---@field condition? string
 ---@field hit_condition? string
+---@field disabled? boolean
 
 ---@param name string
 ---@param opts? dap.breakpoints.func.set.Opts
@@ -285,7 +300,8 @@ function M_func.toggle(name, opts)
   local bp = { ---@type dap.bp.func
     name = name,
     condition = opts.condition,
-    hitCondition = opts.hit_condition
+    hitCondition = opts.hit_condition,
+    disabled = opts.disabled,
   }
   func_bp_by_name[name] = bp
 end
@@ -334,6 +350,7 @@ end
 ---@field condition? string
 ---@field hit_condition? string
 ---@field can_persist? boolean
+---@field disabled? boolean
 
 ---@param data_id string
 ---@param access_type dap.DataBreakpointAccessType | nil
@@ -362,7 +379,8 @@ function M_data.toggle(data_id, access_type, opts)
     accessType = access_type,
     condition = opts.condition,
     hitCondition = opts.hit_condition,
-    canPersist = opts.can_persist
+    canPersist = opts.can_persist,
+    disabled = opts.disabled,
   }
   if not data_bp_by_type_by_id[data_id] then
     data_bp_by_type_by_id[data_id] = {}
@@ -376,11 +394,12 @@ do
   end
 
   ---@class dap.breakpoints.get.Opts
-  ---@field bufexpr? integer|string,
-  ---@field lnum? integer,
-  ---@field condition? boolean,
-  ---@field log_message? boolean,
-  ---@field hit_condition? boolean,
+  ---@field bufexpr? integer|string
+  ---@field lnum? integer
+  ---@field condition? boolean
+  ---@field log_message? boolean
+  ---@field hit_condition? boolean
+  ---@field disabled? boolean
 
   --- Returns all breakpoints grouped by bufnr
   ---
@@ -402,6 +421,7 @@ do
             and matches(bp.condition, opts.condition)
             and matches(bp.logMessage, opts.log_message)
             and matches(bp.hitCondition, opts.hit_condition)
+            and opts.disabled == nil or opts.disabled == (bp.disabled or false)
         then
           table.insert(breakpoints, {
             buf = bufnr,
@@ -409,6 +429,7 @@ do
             condition = bp.condition,
             hitCondition = bp.hitCondition,
             logMessage = bp.logMessage,
+            disabled = bp.disabled,
             state = bp.state,
           })
         end
@@ -424,6 +445,7 @@ do
   ---@field name? string
   ---@field condition? boolean
   ---@field hit_condition? boolean
+  ---@field disabled? boolean
 
   ---@param opts? dap.breakpoints.func.get.Opts
   ---@return dap.bp.func[]
@@ -434,11 +456,13 @@ do
       if matches(fbp.name, opts.name)
           and matches(fbp.condition, opts.condition)
           and matches(fbp.hitCondition, opts.hit_condition)
+          and opts.disabled == nil or opts.disabled == (fbp.disabled or false)
       then
         table.insert(result, {
           name = fbp.name,
           condition = fbp.condition,
           hitCondition = fbp.hitCondition,
+          disabled = fbp.disabled,
           state = fbp.state,
         })
       end
@@ -452,6 +476,7 @@ do
   ---@field can_persist? boolean
   ---@field condition? boolean
   ---@field hit_condition? boolean
+  ---@field disabled? boolean
 
   ---@param opts? dap.breakpoints.data.get.Opts
   ---@return dap.bp.data[]
@@ -462,9 +487,10 @@ do
       for _, dbp in pairs(data_bp_by_type) do
         if matches(dbp.dataId, opts.data_id)
             and matches(dbp.accessType, opts.access_type)
-            and matches(dbp.canPersist, opts.can_persist)
             and matches(dbp.condition, opts.condition)
             and matches(dbp.hitCondition, opts.hit_condition)
+            and opts.can_persist == nil or opts.can_persist == (dbp.canPersist or false)
+            and opts.disabled == nil or opts.disabled == (dbp.disabled or false)
         then
           table.insert(result, {
             dataId = dbp.dataId,
@@ -472,6 +498,7 @@ do
             condition = dbp.condition,
             hitCondition = dbp.hitCondition,
             canPersist = dbp.canPersist,
+            disabled = dbp.disabled,
             state = dbp.state,
           })
         end
@@ -484,6 +511,7 @@ do
   ---@field func? boolean
   ---@field data? boolean
   ---@field can_persist? boolean
+  ---@field disabled? boolean
 
   ---@param opts? dap.breakpoints.clear.Opts
   function M.clear(opts)
@@ -504,6 +532,7 @@ do
             and matches(bp.condition, opts.condition)
             and matches(bp.logMessage, opts.log_message)
             and matches(bp.hitCondition, opts.hit_condition)
+            and opts.disabled == nil or opts.disabled == (bp.disabled or false)
         then
           vim.fn.sign_unplace(ns, {
             buffer = bufnr,
@@ -522,6 +551,7 @@ do
       for name, fbp in pairs(func_bp_by_name) do
         if matches(fbp.condition, opts.condition)
             and matches(fbp.hitCondition, opts.hit_condition)
+            and opts.disabled == nil or opts.disabled == (fbp.disabled or false)
         then
           func_bp_by_name[name] = nil
         end
@@ -530,9 +560,10 @@ do
     if opts.data then
       for data_id, data_bp_by_type in pairs(data_bp_by_type_by_id) do
         for access_type, dbp in pairs(data_bp_by_type) do
-          if matches(dbp.canPersist, opts.can_persist)
-              and matches(dbp.condition, opts.condition)
+          if matches(dbp.condition, opts.condition)
               and matches(dbp.hitCondition, opts.hit_condition)
+              and opts.can_persist == nil or opts.can_persist == (dbp.canPersist or false)
+              and opts.disabled == nil or opts.disabled == (dbp.disabled or false)
           then
             data_bp_by_type_by_id[data_id][access_type] = nil
             if #data_bp_by_type == 0 then
@@ -565,6 +596,7 @@ do
           non_empty(bp.logMessage) and "Log message: " .. bp.logMessage or nil,
           non_empty(bp.condition) and "Condition: " .. bp.condition or nil,
           non_empty(bp.hitCondition) and "Hit condition: " .. bp.hitCondition or nil,
+          bp.disabled and "Disabled: " .. bp.disabled or nil,
         }
         local text = table.concat(vim.tbl_filter(not_nil, text_parts), ', ')
         table.insert(qf_list, {
