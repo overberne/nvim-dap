@@ -1104,7 +1104,6 @@ end
 
 ---@param opts? dap.bp.set.Opts
 function M_bp.set(opts)
-  vim.print(vim.inspect(opts))
   ---@type dap.bp.toggle.Opts
   opts = opts or {}
   opts.replace = true
