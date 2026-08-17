@@ -67,6 +67,22 @@ describe('breakpoints', function()
     assert.are.same(expected, breakpoints.get({ log_message = true }))
   end)
 
+  it('can get enabled breakpoints', function()
+    local curbuf = api.nvim_get_current_buf()
+    api.nvim_buf_set_lines(curbuf, 0, -1, true, {"Hello", "World"})
+    breakpoints.set({ bufnr = curbuf, lnum = 1 })
+    breakpoints.set({ bufnr = curbuf, lnum = 2, disabled = true })
+    local expected = {
+      [curbuf] = {
+        {
+          buf = curbuf,
+          line = 1,
+        },
+      },
+    }
+    assert.are.same(expected, breakpoints.get({ disabled = false }))
+  end)
+
   it('can clear only logpoints', function()
     local curbuf = api.nvim_get_current_buf()
     api.nvim_buf_set_lines(curbuf, 0, -1, true, {"Hello", "World", "Foobar"})

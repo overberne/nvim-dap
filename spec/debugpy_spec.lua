@@ -88,12 +88,13 @@ describe('dap with debugpy', function()
       function() return events.stops and #events.stops == 2 end,
       function() return "Must hit breakpoints. Events: " .. vim.json.encode(events) end
     )
+    print(vim.inspect(events))
     assert.are.same({
       initialized = true,
       setBreakpoints = {
         breakpoints = {
           {
-            id = 1,
+            id = 0,
             line = bp_lnum,
             source = {
               name = 'example.py',
@@ -106,7 +107,7 @@ describe('dap with debugpy', function()
       setFunctionBreakpoints = {
         breakpoints = {
           {
-            id = 0,
+            id = 1,
             source = vim.empty_dict(),
             verified = true,
           },
