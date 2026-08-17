@@ -301,7 +301,7 @@
 
 
 ---@class dap.SetFunctionBreakpointsResponse
----@field breakpoints dap.Breakpoint
+---@field breakpoints dap.Breakpoint[]
 
 ---@class dap.SetFunctionBreakpointsArguments
 ---@field breakpoints? dap.FunctionBreakpoint[]
@@ -323,6 +323,35 @@
 ---@field endColumn? number
 ---@field instructionReference? string
 ---@field offset? number
+
+
+---@class dap.DataBreakpointInfoArguments
+---@field name string
+---@field variablesReference? integer
+---@field frameId? integer
+---@field bytes? integer
+---@field asAddress? boolean
+---@field mode? string
+
+---@alias dap.DataBreakpointAccessType "read" | "write" | "readWrite"
+
+---@class dap.DataBreakpointInfoResponse
+---@field dataId string | nil
+---@field description string
+---@field accessTypes? dap.DataBreakpointAccessType[]
+---@field canPersist? boolean
+
+---@class dap.DataBreakpoint
+---@field dataId string
+---@field accessType? dap.DataBreakpointAccessType
+---@field condition? string
+---@field hitCondition? string
+
+---@class dap.SetDataBreakpointsArguments
+---@field breakpoints dap.DataBreakpoint[]
+
+---@class dap.SetDataBreakpointsResponse
+---@field breakpoints dap.Breakpoint[]
 
 ---@class dap.InitializedEvent
 

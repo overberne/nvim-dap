@@ -39,7 +39,14 @@ You'll need to install and configure a debug adapter per language. See
 A typical debug flow consists of:
 
 - Setting breakpoints via `:DapToggleBreakpoint` or `:lua
-  require'dap'.toggle_breakpoint()`.
+  require'dap'.bp.toggle()`.
+  - Data breakpoints can be set (on supported debuggers) via the `scopes` widget,
+    navigating to a variable, and pressing the `a` keymap to show available actions.
+  - Edit breakpoints via:
+    - `:lua require'dap'.bp_editor.open()` - opens the editor in a new tab.
+    - `:DapShowBreakpoints` - same as above.
+    - `:DapEditBreakpoint` - opens the breakpoint under the cursor in the editor.
+    - `:lua require'dap'.bp.edit()` - update fields of a specific breakpoint.
 - Launching debug sessions and resuming execution via `:DapNew` and
   `:DapContinue` or `:lua require'dap'.continue()`.
 - Stepping through code via `:DapStepOver`, `:DapStepInto` or the corresponding

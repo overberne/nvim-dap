@@ -22,9 +22,21 @@ local bp_by_sign_by_buf = {}
 ---@type table<string, dap.bp.func>
 local func_bp_by_name = {}
 
+---@class dap.bp.data
+---@field dataId string
+---@field accessType dap.DataBreakpointAccessType?
+---@field condition string?
+---@field hitCondition string?
+---@field canPersist boolean?
+---@field state dap.Breakpoint?
+
+---@type table<string, table<dap.DataBreakpointAccessType | "", dap.bp.data>>
+local data_bp_by_type_by_id = {}
+
 local ns = 'dap_breakpoints'
 local M = {}
 local M_func = {}
+local M_data = {}
 
 
 ---@param bufexpr? string|integer
@@ -87,6 +99,15 @@ function M.update(breakpoint)
       return
     end
   end
+  for _, data_bp_by_type in pairs(data_bp_by_type_by_id) do
+    for _, dbp in pairs(data_bp_by_type) do
+      if dbp.state and dbp.state.id == breakpoint.id then
+        dbp.state.verified = breakpoint.verified
+        dbp.state.message = breakpoint.message
+        return
+      end
+    end
+  end
 end
 
 ---@param bufnr integer
@@ -145,6 +166,17 @@ function M.remove_by_id(id)
     if fbp.state and fbp.state.id == id then
       func_bp_by_name[name] = nil
       return
+    end
+  end
+  for data_id, data_bp_by_type in pairs(data_bp_by_type_by_id) do
+    for access_type, dbp in pairs(data_bp_by_type) do
+      if dbp.state and dbp.state.id == id then
+        data_bp_by_type_by_id[data_id][access_type] = nil
+        if #data_bp_by_type == 0 then
+          data_bp_by_type_by_id[data_id] = nil
+        end
+        return
+      end
     end
   end
 end
@@ -206,14 +238,14 @@ end
 ---@param name string
 ---@param state dap.Breakpoint
 function M_func.set_state(name, state)
-    local fbp = func_bp_by_name[name]
-    if fbp then
-      fbp.state = state
-    end
-    if not state.verified then
-      utils.notify('Function breakpoint "' .. name .. '" rejected', vim.log.levels.ERROR)
-    end
+  local fbp = func_bp_by_name[name]
+  if fbp then
+    fbp.state = state
   end
+  if not state.verified then
+    utils.notify('Function breakpoint "' .. name .. '" rejected', vim.log.levels.ERROR)
+  end
+end
 
 ---@param name string
 ---@return boolean
@@ -256,6 +288,86 @@ function M_func.toggle(name, opts)
     hitCondition = opts.hit_condition
   }
   func_bp_by_name[name] = bp
+end
+
+
+---@param data_id string
+---@param access_type? dap.DataBreakpointAccessType
+---@param state dap.Breakpoint
+function M_data.set_state(data_id, access_type, state)
+  local dbp = data_bp_by_type_by_id[data_id] and data_bp_by_type_by_id[data_id][access_type]
+  if dbp then
+    dbp.state = state
+  end
+  if not state.verified then
+    if dbp.accessType then
+      utils.notify(
+        ('Data breakpoint "%s:%s" rejected: %s'):format(dbp.dataId, dbp.accessType, state.message),
+        vim.log.levels.ERROR
+      )
+    else
+      utils.notify(
+        ('Data breakpoint "%s" rejected: %s'):format(dbp.dataId, state.message),
+        vim.log.levels.ERROR
+      )
+    end
+  end
+end
+
+---@param data_id string
+---@param access_type dap.DataBreakpointAccessType | nil
+---@return boolean
+function M_data.remove(data_id, access_type)
+  local data_bp_by_type = data_bp_by_type_by_id[data_id]
+  if data_bp_by_type and data_bp_by_type[access_type or ""] then
+    data_bp_by_type_by_id[data_id][access_type or ""] = nil
+    if #data_bp_by_type == 0 then
+      data_bp_by_type_by_id[data_id] = nil
+    end
+    return true
+  end
+  return false
+end
+
+
+---@class dap.breakpoints.data.set.Opts
+---@field condition? string
+---@field hit_condition? string
+---@field can_persist? boolean
+
+---@param data_id string
+---@param access_type dap.DataBreakpointAccessType | nil
+---@param opts? dap.breakpoints.data.set.Opts
+function M_data.set(data_id, access_type, opts)
+  ---@type dap.breakpoints.data.toggle.Opts
+  opts = opts or {}
+  opts.replace = true
+  M_data.toggle(data_id, access_type, opts)
+end
+
+
+---@class dap.breakpoints.data.toggle.Opts : dap.breakpoints.data.set.Opts
+---@field replace? boolean
+
+---@param data_id string
+---@param access_type dap.DataBreakpointAccessType | nil
+---@param opts? dap.breakpoints.data.toggle.Opts
+function M_data.toggle(data_id, access_type, opts)
+  opts = opts or {}
+  if M_data.remove(data_id, access_type) and not opts.replace then
+    return
+  end
+  local dbp = { ---@type dap.bp.data
+    dataId = data_id,
+    accessType = access_type,
+    condition = opts.condition,
+    hitCondition = opts.hit_condition,
+    canPersist = opts.can_persist
+  }
+  if not data_bp_by_type_by_id[data_id] then
+    data_bp_by_type_by_id[data_id] = {}
+  end
+  data_bp_by_type_by_id[data_id][access_type or ""] = dbp
 end
 
 do
@@ -309,8 +421,9 @@ do
   end
 
   ---@class dap.breakpoints.func.get.Opts
-  ---@field condition? boolean,
-  ---@field hit_condition? boolean,
+  ---@field name? string
+  ---@field condition? boolean
+  ---@field hit_condition? boolean
 
   ---@param opts? dap.breakpoints.func.get.Opts
   ---@return dap.bp.func[]
@@ -318,7 +431,8 @@ do
     opts = opts or {}
     local result = {}
     for _, fbp in pairs(func_bp_by_name) do
-      if matches(fbp.condition, opts.condition)
+      if matches(fbp.name, opts.name)
+          and matches(fbp.condition, opts.condition)
           and matches(fbp.hitCondition, opts.hit_condition)
       then
         table.insert(result, {
@@ -332,8 +446,44 @@ do
     return result
   end
 
+  ---@class dap.breakpoints.data.get.Opts
+  ---@field data_id? string
+  ---@field access_type? dap.DataBreakpointAccessType
+  ---@field can_persist? boolean
+  ---@field condition? boolean
+  ---@field hit_condition? boolean
+
+  ---@param opts? dap.breakpoints.data.get.Opts
+  ---@return dap.bp.data[]
+  function M_data.get(opts)
+    opts = opts or {}
+    local result = {}
+    for _, data_bp_by_type in pairs(data_bp_by_type_by_id) do
+      for _, dbp in pairs(data_bp_by_type) do
+        if matches(dbp.dataId, opts.data_id)
+            and matches(dbp.accessType, opts.access_type)
+            and matches(dbp.canPersist, opts.can_persist)
+            and matches(dbp.condition, opts.condition)
+            and matches(dbp.hitCondition, opts.hit_condition)
+        then
+          table.insert(result, {
+            dataId = dbp.dataId,
+            accessType = dbp.accessType,
+            condition = dbp.condition,
+            hitCondition = dbp.hitCondition,
+            canPersist = dbp.canPersist,
+            state = dbp.state,
+          })
+        end
+      end
+    end
+    return result
+  end
+
   ---@class dap.breakpoints.clear.Opts : dap.breakpoints.get.Opts
-  ---@field func? boolean,
+  ---@field func? boolean
+  ---@field data? boolean
+  ---@field can_persist? boolean
 
   ---@param opts? dap.breakpoints.clear.Opts
   function M.clear(opts)
@@ -341,40 +491,54 @@ do
       vim.fn.sign_unplace(ns)
       bp_by_sign_by_buf = {}
       func_bp_by_name = {}
+      data_bp_by_type_by_id = {}
       return
     end
-    if opts.func == nil or opts.func == false then
-      local signs = get_breakpoint_signs(opts.bufexpr)
-      for _, buf_bp_signs in pairs(signs) do
-        local bufnr = buf_bp_signs.bufnr
-        local bp_by_sign = bp_by_sign_by_buf[bufnr]
-        for _, sign in pairs(buf_bp_signs.signs) do
-          local bp = bp_by_sign and bp_by_sign[sign.id] or {}
-          if (opts.lnum == nil or sign.lnum == opts.lnum)
-              and matches(bp.condition, opts.condition)
-              and matches(bp.logMessage, opts.log_message)
-              and matches(bp.hitCondition, opts.hit_condition)
-          then
-            vim.fn.sign_unplace(ns, {
-              buffer = bufnr,
-              id = sign.id,
-            })
-            if bp_by_sign then
-              bp_by_sign[sign.id] = nil
-            end
+    local signs = get_breakpoint_signs(opts.bufexpr)
+    for _, buf_bp_signs in pairs(signs) do
+      local bufnr = buf_bp_signs.bufnr
+      local bp_by_sign = bp_by_sign_by_buf[bufnr]
+      for _, sign in pairs(buf_bp_signs.signs) do
+        local bp = bp_by_sign and bp_by_sign[sign.id] or {}
+        if (opts.lnum == nil or sign.lnum == opts.lnum)
+            and matches(bp.condition, opts.condition)
+            and matches(bp.logMessage, opts.log_message)
+            and matches(bp.hitCondition, opts.hit_condition)
+        then
+          vim.fn.sign_unplace(ns, {
+            buffer = bufnr,
+            id = sign.id,
+          })
+          if bp_by_sign then
+            bp_by_sign[sign.id] = nil
           end
         end
-        if bp_by_sign and next(bp_by_sign) == nil then
-          bp_by_sign_by_buf[bufnr] = nil
-        end
+      end
+      if bp_by_sign and next(bp_by_sign) == nil then
+        bp_by_sign_by_buf[bufnr] = nil
       end
     end
-    if opts.func == nil or opts.func and (opts.bufexpr == nil and opts.lnum == nil) then
+    if opts.func then
       for name, fbp in pairs(func_bp_by_name) do
         if matches(fbp.condition, opts.condition)
             and matches(fbp.hitCondition, opts.hit_condition)
         then
           func_bp_by_name[name] = nil
+        end
+      end
+    end
+    if opts.data then
+      for data_id, data_bp_by_type in pairs(data_bp_by_type_by_id) do
+        for access_type, dbp in pairs(data_bp_by_type) do
+          if matches(dbp.canPersist, opts.can_persist)
+              and matches(dbp.condition, opts.condition)
+              and matches(dbp.hitCondition, opts.hit_condition)
+          then
+            data_bp_by_type_by_id[data_id][access_type] = nil
+            if #data_bp_by_type == 0 then
+              data_bp_by_type_by_id[data_id] = nil
+            end
+          end
         end
       end
     end
@@ -479,4 +643,5 @@ function M.jump(count)
 end
 
 M.func = M_func
+M.data = M_data
 return M

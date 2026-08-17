@@ -340,12 +340,21 @@ function Session:event_initialized()
       local fbps = breakpoints.func.get()
       self:set_function_breakpoints(fbps, set_exception_breakpoints)
     else
-      on_done()
+      set_exception_breakpoints()
+    end
+  end
+
+  local function set_data_breakpoints()
+    if self.capabilities.supportsDataBreakpoints then
+      local dbps = breakpoints.data.get({ can_persist = true })
+      self:set_data_breakpoints(dbps, set_function_breakpoints)
+    else
+      set_function_breakpoints()
     end
   end
 
   local bps = breakpoints.get()
-  self:set_breakpoints(bps, set_function_breakpoints)
+  self:set_breakpoints(bps, set_data_breakpoints)
 end
 
 
@@ -1069,6 +1078,54 @@ do
       end
     end
     self:request('setFunctionBreakpoints', payload, on_response)
+  end
+
+  ---@param dbps dap.bp.data[]
+  function Session:set_data_breakpoints(dbps, on_done)
+    if not self.capabilities.supportsDataBreakpoints then
+      utils.notify("Debug adapter doesn't support data breakpoints", vim.log.levels.INFO)
+      return
+    end
+    notify_if_missing_capability(dbps, self.capabilities)
+    ---@type dap.SetDataBreakpointsArguments
+    local payload = {
+      breakpoints = vim.tbl_map(
+        function(dbp)
+          -- trim extra information like the state
+          return {
+            dataId = dbp.dataId,
+            accessType = dbp.accessType,
+            condition = dbp.condition,
+            hitCondition = dbp.hitCondition,
+          }
+        end,
+        dbps
+      ),
+    }
+    ---@param err1 dap.ErrorResponse
+    ---@param resp dap.SetDataBreakpointsResponse
+    local function on_response(err1, resp)
+      if err1 then
+        utils.notify('Error setting data breakpoints: ' .. tostring(err1), vim.log.levels.ERROR)
+      elseif resp then
+        for i, bp in ipairs(resp.breakpoints) do
+          local dataId = payload.breakpoints[i].dataId
+          local accessType = payload.breakpoints[i].accessType
+          breakpoints.data.set_state(dataId, accessType, bp)
+          if not bp.verified then
+            if accessType then
+              log:info(('Data breakpoint "%s:%s" unverified'):format(dataId, accessType), bp)
+            else
+              log:info('Data breakpoint "' .. dataId .. '" unverified', bp)
+            end
+          end
+        end
+      end
+      if on_done then
+        on_done()
+      end
+    end
+    self:request('setDataBreakpoints', payload, on_response)
   end
 end
 

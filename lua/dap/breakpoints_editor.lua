@@ -17,11 +17,12 @@ local M = {}
 
 ---Stores snapshots of breakpoints per open editor buffer.
 ---Snapshots created on buffer open/render
----@type table<integer, dap.bp|dap.bp.func>
+---@type table<integer, dap.bp|dap.bp.func|dap.bp.data>
 local bp_by_lnum = {}
 
 local BUFFER_NAME = 'dap-breakpoints://editor'
 
+local sign_ns = 'dap-breakpoints-editor'
 local diagnostic_ns = api.nvim_create_namespace('dap_breakpoints_editor_diagnostics')
 local diagnostic_source = 'dap-breakpoints-editor'
 
@@ -34,16 +35,23 @@ local valid_function_fields = {
   condition    = true,
   hitCondition = true,
 }
+local valid_data_fields = {
+  condition    = true,
+  hitCondition = true,
+}
 local valid_breakpoint_fields_err = 'Invalid field name, expected `condition`, `hitCondition` or `logMessage`'
 local valid_function_fields_err = 'Invalid field name, expected `condition`, `hitCondition`'
+local valid_data_fields_err = 'Invalid field name, expected `condition`, `hitCondition`'
 
----@param bp dap.bp|dap.bp.func
+---@param bp dap.bp|dap.bp.func|dap.bp.data
 ---@return string
 local function bp_key(bp)
-  return ('%s:%s:%s'):format(
+  return ('%s:%s:%s:%s:%s'):format(
     bp.buf or '',
     bp.line or '',
-    bp.name or ''
+    bp.name or '',
+    bp.dataId or '',
+    bp.accessType or ''
   )
 end
 
@@ -120,50 +128,90 @@ local function append_optional_field(lines, label, value)
   end
 end
 
----@param bp dap.bp|dap.bp.func
+---@param bp dap.bp|dap.bp.func|dap.bp.data
 local function header_for(bp)
   if bp.buf then
     local path = display_path(path_for_buffer(bp.buf))
     return ('%s:%d'):format(path, bp.line)
-  else
+  elseif bp.name then
     return 'function ' .. bp.name
+  else
+    if bp.accessType then
+      return ('data %s %s'):format(bp.accessType, bp.dataId)
+    else
+      return 'data ' .. bp.dataId
+    end
   end
 end
 
-local function render(bufnr)
-  bp_by_lnum = {}
-  local lines = {}
+---@return (dap.bp|dap.bp.func|dap.bp.data)[]
+local function get_bps_sorted()
+  ---@type (dap.bp|dap.bp.func|dap.bp.data)[]
+  local all_bps = {}
   local bps = breakpoints.get()
   local buffers = vim.tbl_keys(bps)
   table.sort(buffers, function(a, b)
     return path_for_buffer(a) < path_for_buffer(b)
   end)
   for _, buf in ipairs(buffers) do
-    local path = display_path(path_for_buffer(buf))
     local buf_bps = bps[buf]
     table.sort(buf_bps, function(a, b)
       return a.line < b.line
     end)
-    for _, bp in ipairs(buf_bps) do
-      lines[#lines + 1] = header_for(bp)
-      bp_by_lnum[#lines] = bp
-      append_optional_field(lines, 'condition', bp.condition)
-      append_optional_field(lines, 'hitCondition', bp.hitCondition)
-      append_optional_field(lines, 'logMessage', bp.logMessage)
-    end
+    all_bps = vim.list_extend(all_bps, buf_bps)
   end
   local fbps = breakpoints.func.get()
   table.sort(fbps, function(a, b)
     return a.name < b.name
   end)
-  for _, fbp in ipairs(fbps) do
-    lines[#lines + 1] = header_for(fbp)
-    bp_by_lnum[#lines] = fbp
-    append_optional_field(lines, 'condition', fbp.condition)
-    append_optional_field(lines, 'hitCondition', fbp.hitCondition)
+  local dbps = breakpoints.data.get()
+  table.sort(dbps, function(a, b)
+    if a.dataId == b.dataId then
+      return a.accessType < b.accessType
+    end
+    return a.dataId < b.dataId
+  end)
+  all_bps = vim.list_extend(all_bps, fbps)
+  all_bps = vim.list_extend(all_bps, dbps)
+  return all_bps
+end
+
+local function render(bufnr)
+  vim.diagnostic.reset(diagnostic_ns, bufnr)
+  vim.fn.sign_unplace(sign_ns)
+  bp_by_lnum = {}
+  local lines = {}
+  local diagnostics = {}
+  local bps = get_bps_sorted()
+  for _, bp in ipairs(bps) do
+    lines[#lines + 1] = header_for(bp)
+    bp_by_lnum[#lines] = bp
+    if bp.state and not bp.state.verified then
+      vim.fn.sign_place(
+        0,
+        sign_ns,
+        'DapBreakpointRejected',
+        bufnr,
+        { lnum = #lines, priority = 21 }
+      )
+      if bp.state.message then
+        diagnostics[#diagnostics + 1] = {
+          lnum = #lines - 1,
+          col = 0,
+          severity = vim.diagnostic.severity.ERROR,
+          source = diagnostic_source,
+          message = bp.state.message,
+        }
+      end
+    end
+    append_optional_field(lines, 'condition', bp.condition)
+    append_optional_field(lines, 'hitCondition', bp.hitCondition)
+    append_optional_field(lines, 'logMessage', bp.logMessage)
   end
   api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-  vim.diagnostic.reset(diagnostic_ns, bufnr)
+  if #diagnostics > 0 then
+    vim.diagnostic.set(diagnostic_ns, bufnr, diagnostics)
+  end
 end
 
 local function refresh_if_clean(bufnr)
@@ -204,12 +252,13 @@ end
 ---@param line string
 ---@param seen_sources table<string, boolean>
 ---@param seen_functions table<string, boolean>
+---@param seen_data table<string, boolean>
 ---@param errors dap.breakpoints_editor.parse_error[]
 ---@param lnum integer
----@return dap.bp|dap.bp.func?
-local function parse_header(line, seen_sources, seen_functions, errors, lnum)
+---@return dap.bp|dap.bp.func|dap.bp.data?
+local function parse_header(line, seen_sources, seen_functions, seen_data, errors, lnum)
   if vim.startswith(line, 'function') then
-    local name = line:match('function%s+(.+)$')
+    local name = line:match('^function%s+(.+)$')
     if not name then
       table.insert(errors, {
         lnum = lnum,
@@ -228,8 +277,44 @@ local function parse_header(line, seen_sources, seen_functions, errors, lnum)
     return {
       name = name,
     }
+  elseif vim.startswith(line, 'data') then
+    local access_type, data_id = line:match('^data%s+(.+)%s+(.+)$')
+    if not data_id then
+      data_id = line:match('^data%s+(.+)$')
+      access_type = nil
+    end
+    if not data_id then
+      table.insert(errors, {
+        lnum = lnum,
+        message = 'Expected `data accessType dataId` or `data dataId`'
+      })
+      return nil
+    end
+    if access_type and not (access_type == 'read' or access_type == 'write' or access_type == 'readWrite') then
+      table.insert(errors, {
+        lnum = lnum,
+        message = 'AccessType must be "read", "write", or "readWrite".'
+      })
+      return nil
+    end
+    local key = data_id
+    if access_type then
+      key = access_type .. ' ' .. data_id
+    end
+    if seen_data[key] then
+      table.insert(errors, {
+        lnum = lnum,
+        message = ('Duplicate data "%s"'):format(key)
+      })
+      return nil
+    end
+    seen_data[key] = true
+    return {
+      dataId = data_id,
+      accessType = access_type,
+    }
   else -- Normal breakpoint
-    local path, row = line:match('(.+):(%d+)$')
+    local path, row = line:match('^(.+):(%d+)$')
     if not path or not row then
       table.insert(errors, {
         lnum = lnum,
@@ -274,7 +359,7 @@ local function clean_field_value(value)
 end
 
 ---@param line string
----@param bp dap.bp|dap.bp.func
+---@param bp dap.bp|dap.bp.func|dap.bp.data
 ---@param errors dap.breakpoints_editor.parse_error[]
 ---@param lnum integer
 local function parse_field(line, bp, errors, lnum)
@@ -289,6 +374,9 @@ local function parse_field(line, bp, errors, lnum)
   elseif bp.name and not valid_function_fields[field] then
     table.insert(errors, { lnum = lnum, message = valid_function_fields_err })
     return
+  elseif bp.dataId and not valid_data_fields[field] then
+    table.insert(errors, { lnum = lnum, message = valid_data_fields_err })
+    return
   elseif bp[field] then
     table.insert(errors, {
       lnum = lnum,
@@ -296,7 +384,18 @@ local function parse_field(line, bp, errors, lnum)
     })
     return
   end
-  bp[field] = clean_field_value(value)
+  value = clean_field_value(value)
+  if field == 'canPersist' then
+    if not (value == 'true' or value == 'false') then
+      table.insert(errors, {
+        lnum = lnum,
+        message = ('Field `canPersist` must be `true` or `false`'):format(field)
+      })
+      return
+    end
+    value = value == 'true'
+  end
+  bp[field] = value
 end
 
 
@@ -307,17 +406,20 @@ end
 ---@param bufnr integer
 ---@return dap.bp[]
 ---@return dap.bp.func[]
+---@return dap.bp.data[]
 ---@return dap.breakpoints_editor.parse_error[]
 local function parse(bufnr)
   local lines = api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local errors = {}
   local seen_sources = {}
   local seen_functions = {}
+  local seen_data = {}
   local bps = {}
   local fbps = {}
-  ---@type dap.bp|dap.bp.func?
+  local dbps = {}
+  ---@type dap.bp|dap.bp.func|dap.bp.data?
   local bp = nil
-  ---@type dap.bp|dap.bp.func?
+  ---@type dap.bp|dap.bp.func|dap.bp.data?
   for lnum, line in ipairs(lines) do
     line = trim_end(line)
     if line == '' then
@@ -328,21 +430,23 @@ local function parse(bufnr)
       if not bp then
         table.insert(errors, {
           lnum = lnum,
-          message = 'Expected `path:line` or `function name`'
+          message = 'Expected `path:line` or `function name` or `data [accessType ]dataId`'
         })
         goto continue
       end
       parse_field(line, bp, errors, lnum)
     else
-      local new_bp = parse_header(line, seen_sources, seen_functions, errors, lnum)
+      local new_bp = parse_header(line, seen_sources, seen_functions, seen_data, errors, lnum)
       if not new_bp then
         goto continue
       end
       if bp then
         if bp.buf then
           table.insert(bps, bp)
-        else
+        elseif bp.name then
           table.insert(fbps, bp)
+        else
+          table.insert(dbps, bp)
         end
       end
       bp = new_bp
@@ -352,15 +456,17 @@ local function parse(bufnr)
   if bp then
     if bp.buf then
       table.insert(bps, bp)
-    else
+    elseif bp.name then
       table.insert(fbps, bp)
+    else
+      table.insert(dbps, bp)
     end
   end
-  return bps, fbps, errors
+  return bps, fbps, dbps, errors
 end
 
----@param left dap.bp|dap.bp.func
----@param right dap.bp|dap.bp.func
+---@param left dap.bp|dap.bp.func|dap.bp.data
+---@param right dap.bp|dap.bp.func|dap.bp.data
 ---@return boolean
 local function compare_breakpoint(left, right)
   if left.buf then
@@ -370,44 +476,43 @@ local function compare_breakpoint(left, right)
         and left.hitCondition == right.hitCondition
         and left.logMessage == right.logMessage
   end
-  return left.name == right.name
+  if left.name then
+    return left.name == right.name
+        and left.condition == right.condition
+        and left.hitCondition == right.hitCondition
+  end
+  return left.dataId == right.dataId
+      and left.accessType == right.accessType
       and left.condition == right.condition
       and left.hitCondition == right.hitCondition
 end
 
 ---@class dap.breakpoints_editor.bp_diff
 ---@field action 'new'|'change'|'delete'
----@field old dap.bp|dap.bp.func?
----@field new dap.bp|dap.bp.func?
+---@field old dap.bp|dap.bp.func|dap.bp.data?
+---@field new dap.bp|dap.bp.func|dap.bp.data?
 
 ---@param bps dap.bp[]
 ---@param fbps dap.bp.func[]
+---@param dbps dap.bp.data[]
 ---@return dap.breakpoints_editor.bp_diff[]
-local function diff_breakpoints(bps, fbps)
+local function diff_breakpoints(bps, fbps, dbps)
   ---@type dap.breakpoints_editor.bp_diff[]
   local diffs = {}
-  ---@type table<string, dap.bp|dap.bp.func>
+  ---@type table<string, dap.bp|dap.bp.func|dap.bp.data>
   local old_bps = {}
   for _, bp in pairs(bp_by_lnum) do
     old_bps[bp_key(bp)] = bp
   end
-  for _, bp in ipairs(bps) do
+  ---@type (dap.bp|dap.bp.func|dap.bp.data)[]
+  local new_bps = vim.list_extend({}, bps)
+  new_bps = vim.list_extend(new_bps, fbps)
+  new_bps = vim.list_extend(new_bps, dbps)
+  for _, bp in ipairs(new_bps) do
     local key = bp_key(bp)
     local old_bp = old_bps[key]
     if old_bp then
       --Remove so we can determine which old bps are deleted
-      old_bps[key] = nil
-      if not compare_breakpoint(old_bp, bp) then
-        table.insert(diffs, { action = 'change', old = old_bp, new = bp })
-      end
-    else
-      table.insert(diffs, { action = 'new', new = bp })
-    end
-  end
-  for _, bp in ipairs(fbps) do
-    local key = bp_key(bp)
-    local old_bp = old_bps[key]
-    if old_bp then
       old_bps[key] = nil
       if not compare_breakpoint(old_bp, bp) then
         table.insert(diffs, { action = 'change', old = old_bp, new = bp })
@@ -489,8 +594,8 @@ end
 ---- condition: y
 ---~ condition: z
 
----@param a dap.bp|dap.bp.func?
----@param b dap.bp|dap.bp.func?
+---@param a dap.bp|dap.bp.func|dap.bp.data?
+---@param b dap.bp|dap.bp.func|dap.bp.data?
 local function diff_fields(a, b)
   if a == nil then
     return nil, b
@@ -529,7 +634,7 @@ local function append_fields(lines, obj)
     return
   end
   for key, value in pairs(obj) do
-    if key ~= 'buf' and key ~= 'line' and key ~= 'name' then
+    if key ~= 'buf' and key ~= 'line' and key ~= 'name' and key ~= 'dataId' and key ~= 'accessType' then
       lines[#lines + 1] = ('    %s: %s'):format(key, value)
     end
   end
@@ -639,6 +744,7 @@ end
 local function apply_diffs(diffs)
   local buffers = {}
   local functions_changed = false
+  local data_changed = false
   for _, diff in ipairs(diffs) do
     local old = diff.old
     if old then
@@ -667,6 +773,12 @@ local function apply_diffs(diffs)
           condition = new.condition,
           hit_condition = new.hitCondition,
         })
+      elseif new.dataId then
+        data_changed = true
+        breakpoints.data.set(new.dataId, new.accessType, {
+          condition = new.condition,
+          hit_condition = new.hitCondition,
+        })
       end
     end
   end
@@ -681,6 +793,12 @@ local function apply_diffs(diffs)
     local fbps = breakpoints.func.get()
     utils.broadcast(sessions, function(s)
       s:set_function_breakpoints(fbps)
+    end)
+  end
+  if data_changed then
+    local dbps = breakpoints.data.get()
+    utils.broadcast(sessions, function(s)
+      s:set_data_breakpoints(dbps)
     end)
   end
 end
@@ -766,21 +884,11 @@ end
 ---  bufnr?: integer,
 ---  lnum?: integer,
 ---  func?: string,
+---  data_id?: string,
+---  access_type?: dap.DataBreakpointAccessType | nil,
 ---}?
 function M.open(opts)
-  local buf = vim.fn.bufnr(BUFFER_NAME)
-  if buf < 0 then
-    buf = M.new_buf()
-    vim.cmd.tabnew()
-    vim.api.nvim_win_set_buf(0, buf)
-  end
-  focus_buffer(buf)
-  if not opts then
-    return
-  end
-  if not bp_by_lnum or #bp_by_lnum == 0 then
-    return
-  end
+  opts = opts or {}
   local key
   if opts.curline then
     local bufnr = api.nvim_get_current_buf()
@@ -792,15 +900,25 @@ function M.open(opts)
       return
     end
     local bps = breakpoints.get({ bufexpr = opts.bufnr, lnum = opts.lnum })[opts.bufnr]
-    key = bps and bp_key(bps[1]) or nil
+    key = #bps > 0 and bp_key(bps[1]) or nil
   elseif opts.lnum then
     local bufnr = api.nvim_get_current_buf()
     local bps = breakpoints.get({ bufexpr = bufnr, lnum = opts.lnum })[bufnr]
-    key = bps and bp_key(bps[1]) or nil
+    key = #bps > 0 and bp_key(bps[1]) or nil
   elseif opts.func then
     local fbps = breakpoints.func.get({ name = opts.func })
-    key = fbps and bp_key(fbps[1]) or nil
+    key = #fbps > 0 and bp_key(fbps[1]) or nil
+  elseif opts.data_id then
+    local dbps = breakpoints.data.get({ data_id = opts.data_id, access_type = opts.access_type })
+    key = #dbps > 0 and bp_key(dbps[1]) or nil
   end
+  local buf = vim.fn.bufnr(BUFFER_NAME)
+  if buf < 0 then
+    buf = M.new_buf()
+    vim.cmd.tabnew()
+    vim.api.nvim_win_set_buf(0, buf)
+  end
+  focus_buffer(buf)
   if not key then
     return
   end
@@ -818,7 +936,7 @@ function M.save(bufnr)
     utils.notify('Unable to save, buffer ' .. bufnr .. ' does not exist', vim.log.levels.WARN)
     return
   end
-  local parsed_bps, parsed_fbps, errors = parse(bufnr)
+  local parsed_bps, parsed_fbps, parsed_dbps, errors = parse(bufnr)
   if #errors > 0 then
     local diagnostics = {}
     for _, err in ipairs(errors) do
@@ -833,10 +951,11 @@ function M.save(bufnr)
     vim.diagnostic.set(diagnostic_ns, bufnr, diagnostics)
     return
   end
-  local diffs = diff_breakpoints(parsed_bps, parsed_fbps)
+  local diffs = diff_breakpoints(parsed_bps, parsed_fbps, parsed_dbps)
   local live_bps = vim.iter(breakpoints.get()):flatten():totable()
   local live_fbps = breakpoints.func.get()
-  local live_diffs = diff_breakpoints(live_bps, live_fbps)
+  local live_dbps = breakpoints.data.get()
+  local live_diffs = diff_breakpoints(live_bps, live_fbps, live_dbps)
   local conflicts
   diffs, live_diffs, conflicts = find_conflicts(diffs, live_diffs)
   if #conflicts > 0 then

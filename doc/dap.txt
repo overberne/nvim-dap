@@ -499,9 +499,10 @@ Some example mappings you could configure:
     vim.keymap.set('n', '<F10>', function() require('dap').step_over() end)
     vim.keymap.set('n', '<F11>', function() require('dap').step_into() end)
     vim.keymap.set('n', '<F12>', function() require('dap').step_out() end)
-    vim.keymap.set('n', '<Leader>b', function() require('dap').toggle_breakpoint() end)
-    vim.keymap.set('n', '<Leader>B', function() require('dap').set_breakpoint() end)
-    vim.keymap.set('n', '<Leader>lp', function() require('dap').set_breakpoint(nil, nil, vim.fn.input('Log point message: ')) end)
+    vim.keymap.set('n', '<Leader>b', function() require('dap').bp.toggle() end)
+    vim.keymap.set('n', '<Leader>B', function() require('dap').bp.set() end)
+    vim.keymap.set('n', '<Leader>lp', function() require('dap').bp.set({ log_message = vim.fn.input('Log point message: ') }) end)
+    vim.keymap.set('n', '<Leader>de', function() require('dap').bp_editor.open() end)
     vim.keymap.set('n', '<Leader>dr', function() require('dap').repl.open() end)
     vim.keymap.set('n', '<Leader>dl', function() require('dap').run_last() end)
     vim.keymap.set({'n', 'v'}, '<Leader>dh', function()
@@ -550,6 +551,11 @@ Breakpoints:
 
 - `DapClearBreakpoints` : Clear all breakpoints
 - `DapToggleBreakpoint` : Set or remove a breakpoint at the current line
+- `DapEditBreakpoint` : Edit a breakpoint at the current line in the
+  breakpoints editor.
+- `DapShowBreakpoints` : Open the breakpoints editor
+- `DapNextBreakpoints` : Jump to the next breakpoint, if any
+- `DapPrevBreakpoints` : Jump to the previous breakpoint, if any
 
 Diagnostics:
 
@@ -790,6 +796,9 @@ terminate(opts),                                              *dap.terminate()*
                        in that case it terminates all root sessions including
                        all their children.
 
+bp.edit({opts})                                                  *dap.bp.edit()*
+        Same as |bp.set|, but edits non-nil fields passed via options.
+
 bp.set({opts})                                                    *dap.bp.set()*
         Same as |bp.toggle|, but is guaranteed to overwrite previous
         breakpoint.
@@ -814,6 +823,12 @@ bp.toggle({opts})                                              *dap.bp.toggle()*
                     interpolation with {foo} is supported within the message.
                     - `func`: `string?`: Optional function name. This
                     transforms the breakpoint into a function breakpoint.
+                    - `data_id`: `string?`: Optional data id. This transforms
+                    the breakpoint into a data breakpoint.
+                    - `access_type`: `string?`: Optional access-type for data
+                    breakpoints. Can be "read", "write" or "readWrite".
+                    - `can_persist`: `boolean?`: Optional flag for persisting
+                    data booleans beyond their lifetimes.
 
 bp.list({opts})                                                  *dap.bp.list()*
         Lists all breakpoints and log points matching the filter options in a
@@ -858,6 +873,9 @@ bp.clear({opts})                                                *dap.bp.clear()*
                     breakpoints with hit conditions.
                     - `log_message`: `boolean?`: Optional filter for log points.
                     - `func`: `boolean?`: Optional filter for function breakpoints.
+                    - `data`: `boolean?`: Optional filter for data breakpoints.
+                    - `can_persist`: `boolean?`: Optional filter for
+                    (non-)persistent data breakpoints.
 
 bp.jump([{count}])                                               *dap.bp.jump()
         Jumps to the next/prev breakpoint relative to the current cursor
@@ -1085,6 +1103,38 @@ repl.close()                                                  *dap.repl.close()*
 repl.execute({text})                                        *dap.repl.execute()*
         Add and execute text as if entered directly
 
+breakpoints_editor.open({opts})                  *dap.breakpoints_editor.open()*
+        Open a the breakpoints buffer in a new tab.
+        Use `:w` to save changes to the breakpoints.
+        If conflicting changes have been applied outside of the editor
+        the user will be prompted to resolve conflicts.
+
+        Breakpoints take the following forms: >
+            my/path/file.ext:123
+              condition: foo == true
+              hitCondition: 5
+              logMessage: got here
+            function malloc
+              condition: true
+              hitCondition: 10
+            data readWrite -1,0,*(*[8]byte)(0x111747bc2e60)
+              condition: true
+              hitCondition: 3
+              canPersist: false
+<
+
+        Parameters: ~
+            {opts}  optional table to specify which breakpoint to select:
+                        `curline` to open the breakpoint at the current line.
+                        `bufnr` combine with `lnum` to open a breakpoint at
+                        that location.
+                        `lnum` use with `bufnr`, or omit `bufnr` to use the
+                        current buffer.
+                        `func` to open a function breakpoint.
+                        `data_id` to open a data breakpoint, if the
+                        access-type is not nil, `access_type` must be
+                        specified.
+                        `access_type` combine with `data_id`.
 
 set_log_level(level)                                       *dap.set_log_level()*
         Sets the log level. Defaults to `INFO`  >

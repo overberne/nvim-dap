@@ -279,8 +279,87 @@ function scope.render_parent(value)
   return value.name
 end
 
+---@param item dap.ui.LineInfo | any
+---@param callback fun(info: dap.DataBreakpointInfoResponse | nil)
+local function get_data_breakpoint_info(item, callback)
+  local dap = require("dap")
+  local session = dap.session()
+  if not session or not session.capabilities.supportsDataBreakpoints then
+    callback(nil)
+    return
+  end
+  local args
+  if item.parent and item.parent.variablesReference then
+    args = {
+      variablesReference = item.parent.variablesReference,
+      name = item.name,
+    }
+  elseif item.evaluateName and session.current_frame then
+    -- Fallback, normally scope variables have a parent.
+    args = {
+      name = item.evaluateName,
+      frameId = session.current_frame.id,
+    }
+  else
+    callback(nil)
+    return
+  end
+  session:request("dataBreakpointInfo", args, function(err, response)
+    if err or not response or not response.dataId then
+      callback(nil)
+      return
+    end
+    callback(response)
+  end)
+end
+
+---@param info dap.DataBreakpointInfoResponse
+local function actions_from_info(info)
+  if not info.dataId then
+    return {}
+  end
+  if not info.accessTypes or #info.accessTypes == 0 then
+    return {{
+      label = "Toggle breakpoint",
+      fn = function ()
+        local breakpoints = require('dap.breakpoints')
+        local session = require('dap').session()
+        breakpoints.data.toggle(info.dataId)
+        if session and session.capabilities.supportsDataBreakpoints then
+          session:set_data_breakpoints(breakpoints.data.get())
+        end
+      end
+    }}
+  end
+  local actions = {}
+  for _, access_type in ipairs(info.accessTypes or {}) do
+    table.insert(actions, {
+      label = 'Toggle breakpoint: ' .. access_type,
+      fn = function()
+        local breakpoints = require('dap.breakpoints')
+        local session = require('dap').session()
+        breakpoints.data.toggle(info.dataId, access_type)
+        if session and session.capabilities.supportsDataBreakpoints then
+          session:set_data_breakpoints(breakpoints.data.get())
+        end
+      end,
+    })
+  end
+  return actions
+end
+
 scope.tree_spec = vim.tbl_extend('force', variable.tree_spec, {
   render_parent = scope.render_parent,
+  compute_actions_async = function(info, done)
+    local item = info.item
+    get_data_breakpoint_info(item, function (bp_info)
+      if not bp_info then
+        done({})
+        return
+      end
+      done(actions_from_info(bp_info))
+    end)
+  end,
 })
 
 

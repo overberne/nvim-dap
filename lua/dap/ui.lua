@@ -104,6 +104,7 @@ function M.new_tree(opts)
   end
   opts.render_child = opts.render_child or opts.render_parent
   local compute_actions = opts.compute_actions or function() return {} end
+  local compute_actions_async = opts.compute_actions_async or function(_, done) done({}) end
   local extra_context = opts.extra_context or {}
   local implicit_expand_action = if_nil(opts.implicit_expand_action, true)
   local is_lazy = opts.is_lazy or function(_) return false end
@@ -172,6 +173,7 @@ function M.new_tree(opts)
         actions = context.actions,
         indent = context.indent + 2,
         compute_actions = context.compute_actions,
+        compute_actions_async = context.compute_actions_async,
         tree = self,
       }
       ctx = vim.tbl_deep_extend('keep', ctx, extra_context)
@@ -212,6 +214,7 @@ function M.new_tree(opts)
       actions = implicit_expand_action and { { label ='Expand', fn = self.toggle, }, } or {},
       indent = indent,
       compute_actions = compute_actions,
+      compute_actions_async = compute_actions_async,
       tree = self,
     }
     context = vim.tbl_deep_extend('keep', context, extra_context)
@@ -381,32 +384,40 @@ function M.trigger_actions(opts)
   if context.compute_actions then
     vim.list_extend(actions, context.compute_actions(info))
   end
-  if opts.filter then
-    local filter = (type(opts.filter) == 'function'
-      and opts.filter
-      or function(x) return x.label == opts.filter end
-    )
-    actions = vim.tbl_filter(filter, actions)
-  end
-  if #actions == 0 then
-    utils.notify('No action possible on: ' .. api.nvim_buf_get_lines(buf, lnum, lnum + 1, true)[1], vim.log.levels.INFO)
-    return
-  end
-  if opts.mode == 'first' then
-    local action = actions[1]
-    action.fn(layer, info.item, lnum, info.context)
-    return
-  end
-  M.pick_if_many(
-    actions,
-    'Actions> ',
-    function(x) return type(x.label) == 'string' and x.label or x.label(info.item) end,
-    function(action)
-      if action then
-        action.fn(layer, info.item, lnum, info.context)
-      end
+  local function show_actions(extra_actions)
+    vim.list_extend(actions, extra_actions or {})
+    if opts.filter then
+        local filter = (type(opts.filter) == 'function'
+        and opts.filter
+        or function(x) return x.label == opts.filter end
+        )
+      actions = vim.tbl_filter(filter, actions)
     end
-  )
+    if #actions == 0 then
+      utils.notify('No action possible on: ' .. api.nvim_buf_get_lines(buf, lnum, lnum + 1, true)[1], vim.log.levels.INFO)
+      return
+    end
+    if opts.mode == 'first' then
+      local action = actions[1]
+      action.fn(layer, info.item, lnum, info.context)
+      return
+    end
+    M.pick_if_many(
+      actions,
+      'Actions> ',
+      function(x) return type(x.label) == 'string' and x.label or x.label(info.item) end,
+      function(action)
+        if action then
+          action.fn(layer, info.item, lnum, info.context)
+        end
+      end
+    )
+  end
+  if context.compute_actions_async then
+    context.compute_actions_async(info, show_actions)
+  else
+    show_actions({})
+  end
 end
 
 
