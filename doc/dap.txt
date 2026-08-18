@@ -803,8 +803,27 @@ terminate(opts),                                              *dap.terminate()*
                        in that case it terminates all root sessions including
                        all their children.
 
-bp.edit({opts})                                                  *dap.bp.edit()*
-        Same as |bp.set|, but edits non-nil fields passed via options.
+bp.edit({bp}, {opts})                                            *dap.bp.edit()*
+        Edit a breakpoint, specify which breakpoint via the `bp` argument,
+        and the values to change via `opts`
+        Parameters: ~
+            {bp}    Table containing:
+
+                    - `buf:` `integer?`: Optional buffer number in which to
+                    find the breakpoint.
+                    - `line`: `integer?`: Optional line number at which to find
+                    the breakpoint.
+                    - `column`: `integer?`: Optional column at which to find
+                    the breakpoint.
+                    - `name`: `string?`: Optional function name.
+                    - `dataId`: `string?`: Optional data id.
+                    - `accessType`: `string?`: Optional access-type for data
+                    breakpoints.
+
+                    HINT: you could pass in a breakpoint from the internal
+                    api: `require'dap.breakpoints'.get(...)`.
+ 
+            {opts}  Same as |bp.set|, but edits non-nil fields passed via opts
 
 bp.set({opts})                                                    *dap.bp.set()*
         Same as |bp.toggle|, but is guaranteed to overwrite previous

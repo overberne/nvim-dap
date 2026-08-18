@@ -1209,26 +1209,26 @@ end
 ---Edits the fields of a breakpoint. Passing nil preserves the field value.
 ---If the breakpoint does not exist, it is created with the specified fields.
 ---@param bp? {
----  bufnr?: integer,
----  lnum?: integer,
----  col?: integer,
----  func?: string,
----  data_id?: string,
----  access_type?: dap.DataBreakpointAccessType|nil,
+---  buf?: integer,
+---  line?: integer,
+---  column?: integer,
+---  name?: string,
+---  dataId?: string,
+---  accessType?: dap.DataBreakpointAccessType|nil,
 ---}
 ---@param opts? dap.bp.set.Opts
 function M_bp.edit(bp, opts)
   bp = bp or {}
   opts = opts or {}
-  if bp.func then
+  if bp.name then
     assert(
-      type(bp.func) == "string",
-      "breakpoint function name must be a string. Got: " .. vim.inspect(bp.func)
+      type(bp.name) == "string",
+      "breakpoint function name must be a string. Got: " .. vim.inspect(bp.name)
     )
-    local fbp = lazy.breakpoints.func.get({ name = bp.func })
+    local fbp = lazy.breakpoints.func.get({ name = bp.name })
     fbp = fbp[1] or {}
     if fbp then
-      lazy.breakpoints.func.remove(bp.func)
+      lazy.breakpoints.func.remove(bp.name)
     end
     M_bp.set({
         func = opts.func or fbp.name,
@@ -1238,21 +1238,21 @@ function M_bp.edit(bp, opts)
     })
   elseif opts.data_id then
     assert(
-      type(bp.data_id) == "string",
-      "breakpoint data-id must be a string. Got: " .. vim.inspect(bp.data_id)
+      type(bp.dataId) == "string",
+      "breakpoint data-id must be a string. Got: " .. vim.inspect(bp.dataId)
     )
     assert(
-      not bp.access_type
-      or not (bp.access_type == "read" or bp.access_type == "write" or bp.access_type == "readWrite"),
-      'breakpoint access-type must be "read", "write", or "readWrite" Got: ' .. vim.inspect(bp.access_type)
+      not bp.accessType
+      or not (bp.accessType == "read" or bp.accessType == "write" or bp.accessType == "readWrite"),
+      'breakpoint access-type must be "read", "write", or "readWrite" Got: ' .. vim.inspect(bp.accessType)
     )
     local dbp = lazy.breakpoints.data.get({
-      data_id = bp.data_id,
-      access_type = bp.access_type
+      data_id = bp.dataId,
+      access_type = bp.accessType
     })
     dbp = dbp[1] or {}
     if dbp then
-      lazy.breakpoints.data.remove(bp.data_id, bp.access_type)
+      lazy.breakpoints.data.remove(bp.dataId, bp.accessType)
     end
     M_bp.set({
         data_id = opts.data_id or dbp.dataId,
@@ -1264,20 +1264,20 @@ function M_bp.edit(bp, opts)
     })
   else
     assert(
-      not bp.bufnr or type(bp.bufnr) == "number" and bp.bufnr % 1 == 0,
-      "breakpoint buffer number must be an integer. Got: " .. vim.inspect(bp.bufnr)
+      not bp.buf or type(bp.buf) == "number" and bp.buf % 1 == 0,
+      "breakpoint buffer number must be an integer. Got: " .. vim.inspect(bp.buf)
     )
     assert(
-      not bp.lnum or type(bp.lnum) == "number" and bp.lnum % 1 == 0,
-      "breakpoint line number must be an integer. Got: " .. vim.inspect(bp.lnum)
+      not bp.line or type(bp.line) == "number" and bp.line % 1 == 0,
+      "breakpoint line number must be an integer. Got: " .. vim.inspect(bp.line)
     )
     assert(
-      not bp.col or type(bp.col) == "number" and bp.col % 1 == 0,
-      "breakpoint column must be an integer. Got: " .. vim.inspect(bp.col)
+      not bp.column or type(bp.column) == "number" and bp.column % 1 == 0,
+      "breakpoint column must be an integer. Got: " .. vim.inspect(bp.column)
     )
-    local bufnr = bp.bufnr or api.nvim_get_current_buf()
-    local lnum = bp.lnum or api.nvim_win_get_cursor(0)[1]
-    local bps = lazy.breakpoints.get({ bufexpr = bufnr, lnum = lnum, col = bp.col })
+    local bufnr = bp.buf or api.nvim_get_current_buf()
+    local lnum = bp.line or api.nvim_win_get_cursor(0)[1]
+    local bps = lazy.breakpoints.get({ bufexpr = bufnr, lnum = lnum, col = bp.column })
     local breakpoint = bps[bufnr] and bps[bufnr][1] or {}
     if breakpoint then
       lazy.breakpoints.remove(breakpoint.buf, breakpoint.line, breakpoint.column)
