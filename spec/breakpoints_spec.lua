@@ -143,7 +143,7 @@ describe('breakpoints', function()
     breakpoints.toggle()
     local state = { line = lnum, id = 1 }
     local fstbuf = api.nvim_get_current_buf()
-    breakpoints.set_state(fstbuf, state)
+    breakpoints.set_state(fstbuf, lnum, nil, state)
     local newbuf = api.nvim_create_buf(true, true)
     api.nvim_set_current_buf(newbuf)
     api.nvim_buf_set_lines(newbuf, 0, -1, true, {"Hello", "World"})

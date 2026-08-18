@@ -42,7 +42,8 @@ local valid_data_fields = {
   hitCondition = true,
   disabled     = true,
 }
-local valid_breakpoint_fields_err = 'Invalid field name, expected `condition`, `hitCondition`, `logMessage`, or `disabled`'
+local valid_breakpoint_fields_err =
+'Invalid field name, expected `condition`, `hitCondition`, `logMessage`, or `disabled`'
 local valid_function_fields_err = 'Invalid field name, expected `condition`, `hitCondition`, or `disabled`'
 local valid_data_fields_err = 'Invalid field name, expected `condition`, `hitCondition`, or `disabled`'
 
@@ -52,6 +53,7 @@ local function bp_key(bp)
   return ('%s:%s:%s:%s:%s'):format(
     bp.buf or '',
     bp.line or '',
+    bp.column or '',
     bp.name or '',
     bp.dataId or '',
     bp.accessType or ''
@@ -135,7 +137,11 @@ end
 local function header_for(bp)
   if bp.buf then
     local path = display_path(path_for_buffer(bp.buf))
-    return ('%s:%d'):format(path, bp.line)
+    if bp.column then
+      return ('%s:%d:%d'):format(path, bp.line, bp.column)
+    else
+      return ('%s:%d'):format(path, bp.line)
+    end
   elseif bp.name then
     return 'function ' .. bp.name
   else
@@ -201,6 +207,7 @@ local function render(bufnr)
         diagnostics[#diagnostics + 1] = {
           lnum = #lines - 1,
           col = 0,
+          col_end = #bp.state.message,
           severity = vim.diagnostic.severity.ERROR,
           source = diagnostic_source,
           message = bp.state.message,
@@ -262,7 +269,7 @@ end
 ---@return dap.bp|dap.bp.func|dap.bp.data?
 local function parse_header(line, seen_sources, seen_functions, seen_data, errors, lnum)
   if vim.startswith(line, 'function') then
-    local name = line:match('^function%s+(.+)$')
+    local name_start, name = line:match('^function%s+()(.+)$')
     if not name then
       table.insert(errors, {
         lnum = lnum,
@@ -273,6 +280,8 @@ local function parse_header(line, seen_sources, seen_functions, seen_data, error
     if seen_functions[name] then
       table.insert(errors, {
         lnum = lnum,
+        col = name_start,
+        end_col = name_start + #name,
         message = ('Duplicate function "%s"'):format(name)
       })
       return nil
@@ -282,9 +291,10 @@ local function parse_header(line, seen_sources, seen_functions, seen_data, error
       name = name,
     }
   elseif vim.startswith(line, 'data') then
-    local access_type, data_id = line:match('^data%s+(.+)%s+(.+)$')
+    local access_start, access_type, data_start, data_id = line:match('^data%s+()(.+)%s+()(.+)$')
     if not data_id then
-      data_id = line:match('^data%s+(.+)$')
+      data_start, data_id = line:match('^data%s+()(.+)$')
+      access_start = nil
       access_type = nil
     end
     if not data_id then
@@ -294,9 +304,14 @@ local function parse_header(line, seen_sources, seen_functions, seen_data, error
       })
       return nil
     end
-    if access_type and access_type ~= 'read' and access_type ~= 'write' and access_type ~= 'readWrite' then
+    if access_type
+        and access_type ~= 'read'
+        and access_type ~= 'write'
+        and access_type ~= 'readWrite' then
       table.insert(errors, {
         lnum = lnum,
+        col = access_start,
+        end_col = access_start + #access_type,
         message = 'AccessType must be "read", "write", or "readWrite".'
       })
       return nil
@@ -308,6 +323,8 @@ local function parse_header(line, seen_sources, seen_functions, seen_data, error
     if seen_data[key] then
       table.insert(errors, {
         lnum = lnum,
+        col = access_start or data_start,
+        end_col = #line,
         message = ('Duplicate data "%s"'):format(key)
       })
       return nil
@@ -318,22 +335,41 @@ local function parse_header(line, seen_sources, seen_functions, seen_data, error
       accessType = access_type,
     }
   else -- Normal breakpoint
-    local path, row = line:match('^(.+):(%d+)$')
+    local path, row_start, row, col_start, col = line:match('^(.+):()(%d+):()(%d+)$')
+    if not col then
+      path, row_start, row = line:match('^(.+):()(%d+)$')
+    end
     if not path or not row then
       table.insert(errors, {
         lnum = lnum,
-        message = 'Expected `path:line`'
+        message = 'Expected `path:line[:col]` or `function name` or `data [accessType ]dataId`'
       })
       return nil
     end
     if tonumber(row) == 0 then
       table.insert(errors, {
         lnum = lnum,
+        col = row_start,
+        end_col = row_start + #row,
         message = 'Line number must be positive'
       })
       return nil
     end
-    local source = ('%s:%d'):format(path, row)
+    if col and tonumber(col) == 0 then
+      table.insert(errors, {
+        lnum = lnum,
+        col = col_start,
+        end_col = col_start + #col,
+        message = 'Column must be positive'
+      })
+      return nil
+    end
+    local source
+    if col then
+      source = ('%s:%d:%d'):format(path, row, col)
+    else
+      source = ('%s:%d'):format(path, row)
+    end
     if seen_sources[source] then
       table.insert(errors, {
         lnum = lnum,
@@ -344,12 +380,18 @@ local function parse_header(line, seen_sources, seen_functions, seen_data, error
     seen_sources[source] = true
     local bufnr, err = buffer_for_path(path)
     if err ~= nil then
-      table.insert(errors, { lnum = lnum, message = err })
+      table.insert(errors, {
+        lnum = lnum,
+        col = 0,
+        end_col = #path,
+        message = err,
+      })
       return nil
     end
     return {
       buf = bufnr,
       line = tonumber(row),
+      col = col and tonumber(col) or nil,
     }
   end
 end
@@ -367,23 +409,43 @@ end
 ---@param errors dap.breakpoints_editor.parse_error[]
 ---@param lnum integer
 local function parse_field(line, bp, errors, lnum)
-  local field, value = line:match('^%s+(.*):%s*(.*)$')
+  -- Position captures let us get exact byte offsets without searching again.
+  local field_start, field, value_start, value = line:match('^%s+()(.*):%s*()(.*)$')
   if not field or not value then
     table.insert(errors, { lnum = lnum, message = 'Expected `  field: value`' })
     return
   end
+  local field_col = field_start
+  local field_end_col = field_col + #field
   if bp.buf and not valid_breakpoint_fields[field] then
-    table.insert(errors, { lnum = lnum, message = valid_breakpoint_fields_err })
+    table.insert(errors, {
+      lnum = lnum,
+      col = field_col,
+      end_col = field_end_col,
+      message = valid_breakpoint_fields_err
+    })
     return
   elseif bp.name and not valid_function_fields[field] then
-    table.insert(errors, { lnum = lnum, message = valid_function_fields_err })
+    table.insert(errors, {
+      lnum = lnum,
+      col = field_col,
+      end_col = field_end_col,
+      message = valid_function_fields_err
+    })
     return
   elseif bp.dataId and not valid_data_fields[field] then
-    table.insert(errors, { lnum = lnum, message = valid_data_fields_err })
+    table.insert(errors, {
+      lnum = lnum,
+      col = field_col,
+      end_col = field_end_col,
+      message = valid_data_fields_err
+    })
     return
   elseif bp[field] then
     table.insert(errors, {
       lnum = lnum,
+      col = field_col,
+      end_col = field_end_col,
       message = ('Duplicate field `%s`'):format(field)
     })
     return
@@ -391,9 +453,12 @@ local function parse_field(line, bp, errors, lnum)
   value = clean_field_value(value)
   if field == 'canPersist' then
     if value ~= 'true' and value ~= 'false' then
+      local value_col = value_start
       table.insert(errors, {
         lnum = lnum,
-        message = ('Field `canPersist` must be `true` or `false`'):format(field)
+        col = value and value_col or 0,
+        end_col = value and value_col + #value or #line,
+        message = 'Field `canPersist` must be `true` or `false`'
       })
       return
     end
@@ -401,9 +466,12 @@ local function parse_field(line, bp, errors, lnum)
   end
   if field == 'disabled' then
     if value ~= 'true' and value ~= 'false' then
+      local value_col = value_start
       table.insert(errors, {
         lnum = lnum,
-        message = ('Field `disabled` must be `true` or `false`'):format(field)
+        col = value and value_col or 0,
+        end_col = value and value_col + #value or #line,
+        message = 'Field `disabled` must be `true` or `false`'
       })
       return
     end
@@ -415,6 +483,8 @@ end
 
 ---@class dap.breakpoints_editor.parse_error
 ---@field lnum integer
+---@field col? integer
+---@field end_col? integer
 ---@field message string
 
 ---@param bufnr integer
@@ -444,7 +514,7 @@ local function parse(bufnr)
       if not bp then
         table.insert(errors, {
           lnum = lnum,
-          message = 'Expected `path:line` or `function name` or `data [accessType ]dataId`'
+          message = 'Expected `path:line[:col]` or `function name` or `data [accessType ]dataId`'
         })
         goto continue
       end
@@ -648,7 +718,12 @@ local function append_fields(lines, obj)
     return
   end
   for key, value in pairs(obj) do
-    if key ~= 'buf' and key ~= 'line' and key ~= 'name' and key ~= 'dataId' and key ~= 'accessType' then
+    if key ~= 'buf'
+        and key ~= 'line'
+        and key ~= 'column'
+        and key ~= 'name'
+        and key ~= 'dataId'
+        and key ~= 'accessType' then
       lines[#lines + 1] = ('    %s: %s'):format(key, value)
     end
   end
@@ -778,6 +853,7 @@ local function apply_diffs(diffs)
         breakpoints.set({
           bufnr = new.buf,
           lnum = new.line,
+          col = new.column,
           condition = new.condition,
           hit_condition = new.hitCondition,
           log_message = new.logMessage,
@@ -834,9 +910,11 @@ local function jump_to_breakpoint(bp)
     return
   end
   api.nvim_win_close(0, false)
-  api.nvim_win_set_buf(0, bp.buf)
-  api.nvim_win_set_cursor(0, { bp.line, 0 })
-  vim.cmd("normal! m'")
+  local switchbuf = vim.o.switchbuf or 'uselast'
+  utils.jump_to_location(bp.buf, bp.line, bp.column or 1, switchbuf, '')
+  -- vim.cmd("normal! m'")
+  -- api.nvim_win_set_buf(0, bp.buf)
+  -- api.nvim_win_set_cursor(0, { bp.line, 0 })
 end
 
 ---@return integer
@@ -901,6 +979,7 @@ end
 ---  curline?: boolean,
 ---  bufnr?: integer,
 ---  lnum?: integer,
+---  col?: integer,
 ---  func?: string,
 ---  data_id?: string,
 ---  access_type?: dap.DataBreakpointAccessType | nil,
@@ -908,21 +987,11 @@ end
 function M.open(opts)
   opts = opts or {}
   local key
-  if opts.curline then
-    local bufnr = api.nvim_get_current_buf()
-    local line = api.nvim_win_get_cursor(api.nvim_get_current_win())[1]
-    local bps = breakpoints.get({ bufexpr = bufnr, lnum = line })[bufnr]
-    key = bps and bp_key(bps[1]) or nil
-  elseif opts.bufnr then
-    if not opts.lnum then
-      return
-    end
-    local bps = breakpoints.get({ bufexpr = opts.bufnr, lnum = opts.lnum })[opts.bufnr]
-    key = #bps > 0 and bp_key(bps[1]) or nil
-  elseif opts.lnum then
-    local bufnr = api.nvim_get_current_buf()
-    local bps = breakpoints.get({ bufexpr = bufnr, lnum = opts.lnum })[bufnr]
-    key = #bps > 0 and bp_key(bps[1]) or nil
+  if opts.curline or opts.bufnr or opts.lnum or opts.col then
+    local bufnr = opts.bufnr or api.nvim_get_current_win()
+    local line = opts.lnum or api.nvim_win_get_cursor(api.nvim_get_current_win())[1]
+    local bps = breakpoints.get({ bufexpr = bufnr, lnum = line, col = opts.col })[bufnr]
+    key = bps and #bps > 0 and bp_key(bps[1]) or nil
   elseif opts.func then
     local fbps = breakpoints.func.get({ name = opts.func })
     key = #fbps > 0 and bp_key(fbps[1]) or nil
@@ -960,7 +1029,8 @@ function M.save(bufnr)
     for _, err in ipairs(errors) do
       diagnostics[#diagnostics + 1] = {
         lnum = err.lnum - 1,
-        col = 0,
+        col = err.col and err.col - 1 or 0,
+        end_col = err.end_col and err.end_col - 1 or #err.message,
         severity = vim.diagnostic.severity.ERROR,
         source = diagnostic_source,
         message = err.message,

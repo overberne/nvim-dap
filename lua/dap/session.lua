@@ -405,164 +405,6 @@ function Session:_show_exception_info(thread_id, bufnr, frame)
 end
 
 
-
----@param win integer
----@param line integer
----@param column integer
-local function set_cursor(win, line, column)
-  local ok, err = pcall(api.nvim_win_set_cursor, win, { line, column - 1 })
-  if ok then
-    local curbuf = api.nvim_get_current_buf()
-    if vim.bo[curbuf].filetype ~= "dap-repl" then
-      api.nvim_set_current_win(win)
-    end
-    api.nvim_win_call(win, function()
-      api.nvim_command('normal! zv')
-    end)
-  else
-    local msg = string.format(
-      "Adapter reported frame in buf %d line %d:%d, but: %s. "
-      .. "Ensure executable is up2date and if using a source mapping ensure it is correct",
-      api.nvim_win_get_buf(win),
-      line,
-      column,
-      err
-    )
-    utils.notify(msg, vim.log.levels.WARN)
-  end
-end
-
-
----@param bufnr number
----@param line number
----@param column number
----@param switchbuf string|fun(bufnr: integer, line: integer, column: integer):nil
----@param filetype string
----@return boolean
-local function jump_to_location(bufnr, line, column, switchbuf, filetype)
-  -- vscode-go sends columns with 0
-  -- That would cause a "Column value outside range" error calling nvim_win_set_cursor
-  -- nvim-dap says "columnsStartAt1 = true" on initialize :/
-  if column == 0 then
-    column = 1
-  end
-  local cur_buf = api.nvim_get_current_buf()
-  if cur_buf == bufnr and api.nvim_win_get_cursor(0)[1] == line and column == 1 then
-    -- A user might have positioned the cursor over a variable in anticipation of hitting a breakpoint
-    -- Don't move the cursor to the beginning of the line if it's in the right place
-    return true
-  end
-
-  local cur_win = api.nvim_get_current_win()
-  local switchbuf_fn = {}
-
-  function switchbuf_fn.uselast()
-    local ok, is_source_buf = pcall(vim.api.nvim_buf_get_var, cur_buf, 'dap_source_buf')
-    is_source_buf = ok and is_source_buf
-    if vim.bo[cur_buf].buftype == '' or vim.bo[cur_buf].filetype == filetype or is_source_buf then
-      api.nvim_win_set_buf(cur_win, bufnr)
-      set_cursor(cur_win, line, column)
-    else
-      local win = vim.fn.win_getid(vim.fn.winnr('#'))
-      if win then
-        api.nvim_win_set_buf(win, bufnr)
-        set_cursor(win, line, column)
-      end
-    end
-    return true
-  end
-
-  function switchbuf_fn.usevisible()
-    if api.nvim_win_get_buf(cur_win) == bufnr then
-      local first = vim.fn.line("w0", cur_win)
-      local last = vim.fn.line("w$", cur_win)
-      if first <= line and line <= last then
-        return true
-      end
-    end
-    return false
-  end
-
-  function switchbuf_fn.useopen()
-    if api.nvim_win_get_buf(cur_win) == bufnr then
-      set_cursor(cur_win, line, column)
-      return true
-    end
-    for _, win in ipairs(api.nvim_tabpage_list_wins(0)) do
-      if api.nvim_win_get_buf(win) == bufnr then
-        set_cursor(win, line, column)
-        return true
-      end
-    end
-    return false
-  end
-
-  function switchbuf_fn.usetab()
-    if api.nvim_win_get_buf(cur_win) == bufnr then
-      set_cursor(cur_win, line, column)
-      return true
-    end
-    local tabs = {0,}
-    vim.list_extend(tabs, api.nvim_list_tabpages())
-    for _, tabpage in ipairs(tabs) do
-      for _, win in ipairs(api.nvim_tabpage_list_wins(tabpage)) do
-        if api.nvim_win_get_buf(win) == bufnr then
-          api.nvim_set_current_tabpage(tabpage)
-          set_cursor(win, line, column)
-          return true
-        end
-      end
-    end
-    return false
-  end
-
-  function switchbuf_fn.split()
-    vim.cmd('split ' .. api.nvim_buf_get_name(bufnr))
-    set_cursor(0, line, column)
-    return true
-  end
-
-  function switchbuf_fn.vsplit()
-    vim.cmd('vsplit ' .. api.nvim_buf_get_name(bufnr))
-    set_cursor(0, line, column)
-    return true
-  end
-
-  function switchbuf_fn.newtab()
-    vim.cmd('tabnew ' .. api.nvim_buf_get_name(bufnr))
-    set_cursor(0, line, column)
-    return true
-  end
-
-  if type(switchbuf) == "string" and switchbuf:find('usetab') then
-    switchbuf_fn.useopen = switchbuf_fn.usetab
-  end
-
-  if type(switchbuf) == "string" and switchbuf:find('newtab') then
-    switchbuf_fn.vsplit = switchbuf_fn.newtab
-    switchbuf_fn.split = switchbuf_fn.newtab
-  end
-
-  if type(switchbuf) == "function" then
-    switchbuf(bufnr, line, column)
-    return true
-  end
-
-  local opts = vim.split(switchbuf, ',', { plain = true })
-  for _, opt in pairs(opts) do
-    local fn = switchbuf_fn[opt]
-    if fn and fn() then
-      return true
-    end
-  end
-  utils.notify(
-    'Stopped at line ' .. line .. ' but `switchbuf` setting prevented jump to location. Target buffer ' .. bufnr .. ' not open in any window?',
-    vim.log.levels.WARN
-  )
-  return false
-end
-
-
 --- Get the bufnr for a frame.
 --- Might load source as a side effect if frame.source has sourceReference ~= 0
 --- Must be called in a coroutine
@@ -623,7 +465,14 @@ local function jump_to_frame(session, frame, preserve_focus_hint, stopped)
     utils.notify(tostring(failure), vim.log.levels.ERROR)
   end
   local switchbuf = defaults(session).switchbuf or vim.o.switchbuf or 'uselast'
-  local jumped = jump_to_location(bufnr, frame.line, frame.column, switchbuf, session.filetype)
+  local jumped = utils.jump_to_location(bufnr, frame.line, frame.column, switchbuf, session.filetype)
+  if jumped == nil then
+    jumped = false
+    utils.notify(
+      'Stopped at line ' .. frame.line .. ' but `switchbuf` setting prevented jump to location. Target buffer ' .. bufnr .. ' not open in any window?',
+      vim.log.levels.WARN
+    )
+  end
   if stopped and stopped.reason == 'exception' then
     session:_show_exception_info(stopped.threadId, bufnr, frame)
   end
@@ -1022,10 +871,14 @@ do
         if err1 then
           utils.notify('Error setting breakpoints: ' .. tostring(err1), vim.log.levels.ERROR)
         elseif resp then
-          for _, bp in pairs(resp.breakpoints) do
-            breakpoints.set_state(bufnr, bp)
-            if not bp.verified then
-              log:info('Breakpoint unverified', bp)
+          for i, bp_out in ipairs(resp.breakpoints) do
+            -- Breakpoints arrive in same order as payload, and the debugger
+            -- may change the source location of the breakpoint, so use
+            -- payload input to identify the breakpoint.
+            local bp_in = payload.breakpoints[i]
+            breakpoints.set_state(bufnr, bp_in.line, bp_in.column, bp_out)
+            if not bp_out.verified then
+              log:info('Breakpoint unverified', bp_out)
             end
           end
         end
@@ -2237,8 +2090,8 @@ function Session.event_breakpoint(session, event)
       -- handled via responses to setFunctionBreakpoints/setDataBreakpoints.
       local bufnr = source_to_bufnr(session, bp.source)
       if bufnr then
-        breakpoints.set({ bufnr = bufnr, lnum = bp.line })
-        breakpoints.set_state(bufnr, bp)
+        breakpoints.set({ bufnr = bufnr, lnum = bp.line, col = bp.column })
+        breakpoints.set_state(bufnr, bp.line, bp.column, bp)
       end
     end
   elseif event.reason == 'removed' then

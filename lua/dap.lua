@@ -1177,12 +1177,17 @@ function M_bp.toggle(opts)
       "breakpoint line number must be an integer. Got: " .. vim.inspect(opts.lnum)
     )
     assert(
+      not opts.col or type(opts.col) == "number" and opts.col % 1 == 0,
+      "breakpoint column must be an integer. Got: " .. vim.inspect(opts.col)
+    )
+    assert(
       not opts.log_message or type(opts.log_message) == "string",
       "breakpoint log-message must be a string. Got: " .. vim.inspect(opts.log_message)
     )
     lazy.breakpoints.toggle({
       bufnr = opts.bufnr,
       lnum = opts.lnum,
+      col = opts.col,
       condition = opts.condition,
       hit_condition = opts.hit_condition,
       log_message = opts.log_message,
@@ -1253,11 +1258,12 @@ function M_bp.edit(opts)
     )
     local bufnr = opts.bufnr or api.nvim_get_current_buf()
     local lnum = opts.lnum or api.nvim_win_get_cursor(0)[1]
-    local bp = lazy.breakpoints.get({ bufexpr = bufnr, lnum = lnum })
+    local bp = lazy.breakpoints.get({ bufexpr = bufnr, lnum = lnum, col = opts.col })
     bp = bp[bufnr] and bp[bufnr][1] or {}
     M_bp.set({
         bufnr = bufnr,
         lnum = lnum,
+        col = opts.col or bp.column,
         condition = opts.condition or bp.condition,
         hit_condition = opts.hit_condition or bp.hitCondition,
         log_message = opts.log_message or bp.logMessage,
@@ -1269,6 +1275,7 @@ end
 ---@class dap.bp.toggle_enabled.Opts
 ---@field bufnr? integer
 ---@field lnum? integer
+---@field col? integer
 ---@field func? string
 ---@field data_id? string
 ---@field access_type? string
@@ -1327,7 +1334,7 @@ function M_bp.toggle_enabled(opts)
     )
     local bufnr = opts.bufnr or api.nvim_get_current_buf()
     local lnum = opts.lnum or api.nvim_win_get_cursor(0)[1]
-    local bp = lazy.breakpoints.get({ bufexpr = bufnr, lnum = lnum })
+    local bp = lazy.breakpoints.get({ bufexpr = bufnr, lnum = lnum, col = opts.col })
     if not bp[bufnr] or not bp[bufnr][1] then
       return
     end
@@ -1335,6 +1342,7 @@ function M_bp.toggle_enabled(opts)
     M_bp.set({
         bufnr = bufnr,
         lnum = lnum,
+        col = bp.column,
         condition = bp.condition,
         hit_condition = bp.hitCondition,
         log_message = bp.logMessage,
@@ -1481,6 +1489,7 @@ function M.run_to_cursor()
         local opts = {
           bufnr = buf,
           lnum = bp.line,
+          col = bp.column,
           condition = bp.condition,
           log_message = bp.logMessage,
           hit_condition = bp.hitCondition,

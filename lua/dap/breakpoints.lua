@@ -5,6 +5,7 @@ local utils = require('dap.utils')
 ---@class dap.bp
 ---@field buf integer
 ---@field line integer
+---@field column integer|nil
 ---@field condition string?
 ---@field logMessage string?
 ---@field hitCondition string?
@@ -123,9 +124,11 @@ function M.update(breakpoint)
 end
 
 ---@param bufnr integer
+---@param lnum integer
+---@param col? integer
 ---@param state dap.Breakpoint
-function M.set_state(bufnr, state)
-  local ok, placements = pcall(vim.fn.sign_getplaced, bufnr, { group = ns, lnum = state.line, })
+function M.set_state(bufnr, lnum, col, state)
+  local ok, placements = pcall(vim.fn.sign_getplaced, bufnr, { group = ns, lnum = lnum, })
   if not ok then
     return
   end
@@ -135,8 +138,13 @@ function M.set_state(bufnr, state)
   end
   for _, sign in pairs(signs) do
     local bp = bp_by_sign_by_buf[bufnr][sign.id]
+    if bp.column ~= col then
+      goto continue
+    end
     if bp then
       bp.state = state
+      bp.line = state.line
+      bp.column = state.column
     end
     if not state.verified then
       vim.fn.sign_place(
@@ -146,17 +154,29 @@ function M.set_state(bufnr, state)
         bufnr,
         { lnum = state.line, priority = 21, }
       )
+    elseif lnum ~= state.line then
+      vim.fn.sign_place(
+        sign.id,
+        ns,
+        get_sign_name(bp),
+        bufnr,
+        { lnum = state.line, priority = 21, }
+      )
     end
+      ::continue::
   end
 end
 
-function M.remove(bufnr, lnum)
+function M.remove(bufnr, lnum, col)
   local placements = vim.fn.sign_getplaced(bufnr, { group = ns, lnum = lnum, })
   local signs = placements[1].signs
   if signs and #signs > 0 then
     for _, sign in pairs(signs) do
-      vim.fn.sign_unplace(ns, { buffer = bufnr, id = sign.id, })
-      bp_by_sign_by_buf[bufnr][sign.id] = nil
+      local column = bp_by_sign_by_buf[bufnr][sign.id].column
+      if col == nil or col == column then
+        vim.fn.sign_unplace(ns, { buffer = bufnr, id = sign.id, })
+        bp_by_sign_by_buf[bufnr][sign.id] = nil
+      end
     end
     return true
   else
@@ -196,6 +216,7 @@ end
 ---@class dap.breakpoints.set.Opts
 ---@field bufnr? integer
 ---@field lnum? integer
+---@field col? integer
 ---@field condition? string
 ---@field log_message? string
 ---@field hit_condition? string
@@ -221,12 +242,13 @@ function M.toggle(opts)
   opts = opts or {}
   local bufnr = opts.bufnr or api.nvim_get_current_buf()
   local lnum = opts.lnum or api.nvim_win_get_cursor(0)[1]
-  if M.remove(bufnr, lnum) and not opts.replace then
+  if M.remove(bufnr, lnum, opts.col) and not opts.replace then
     return
   end
   local bp = { ---@type dap.bp
     buf = bufnr,
     line = lnum,
+    column = opts.col,
     condition = opts.condition,
     logMessage = opts.log_message,
     hitCondition = opts.hit_condition,
@@ -396,6 +418,7 @@ do
   ---@class dap.breakpoints.get.Opts
   ---@field bufexpr? integer|string
   ---@field lnum? integer
+  ---@field col? integer
   ---@field condition? boolean
   ---@field log_message? boolean
   ---@field hit_condition? boolean
@@ -418,6 +441,7 @@ do
       for _, sign in pairs(buf_bp_signs.signs) do
         local bp = bp_by_sign_by_buf[bufnr][sign.id] or {}
         if (opts.lnum == nil or sign.lnum == opts.lnum)
+            and (opts.col == nil or bp.column == opts.col)
             and matches(bp.condition, opts.condition)
             and matches(bp.logMessage, opts.log_message)
             and matches(bp.hitCondition, opts.hit_condition)
@@ -426,6 +450,7 @@ do
           table.insert(breakpoints, {
             buf = bufnr,
             line = sign.lnum,
+            column = bp.column,
             condition = bp.condition,
             hitCondition = bp.hitCondition,
             logMessage = bp.logMessage,
@@ -529,6 +554,7 @@ do
       for _, sign in pairs(buf_bp_signs.signs) do
         local bp = bp_by_sign and bp_by_sign[sign.id] or {}
         if (opts.lnum == nil or sign.lnum == opts.lnum)
+            and (opts.col == nil or bp.column == opts.col)
             and matches(bp.condition, opts.condition)
             and matches(bp.logMessage, opts.log_message)
             and matches(bp.hitCondition, opts.hit_condition)
@@ -602,7 +628,7 @@ do
         table.insert(qf_list, {
           bufnr = bufnr,
           lnum = bp.line,
-          col = 0,
+          col = bp.column or 0,
           text = text,
         })
       end
@@ -632,11 +658,13 @@ function M.jump(count)
     local placed = vim.fn.sign_getplaced(bufnr, { group = ns })[1]
     local signs = placed and placed.signs or {}
     for _, sign in ipairs(signs) do
-      if bp_by_sign[sign.id] then
+      local bp = bp_by_sign[sign.id]
+      if bp then
         targets[#targets + 1] = {
           bufnr = bufnr,
           id = sign.id,
           lnum = sign.lnum,
+          col = bp.column,
         }
       end
     end
@@ -670,7 +698,11 @@ function M.jump(count)
   local offset = direction * (math.abs(count) - 1)
   local index = ((start - 1 + offset) % #targets) + 1
   local target = targets[index]
-  vim.fn.sign_jump(target.id, ns, target.bufnr)
+  local switchbuf = vim.o.switchbuf or 'uselast'
+  utils.jump_to_location(target.bufnr, target.lnum, target.col or 1, switchbuf, '')
+  -- vim.cmd("normal! m'")
+  -- api.nvim_win_set_buf(0, target.buf)
+  -- api.nvim_win_set_cursor(0, { target.line, target.col })
   return true
 end
 
