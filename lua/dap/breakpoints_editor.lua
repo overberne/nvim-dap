@@ -20,7 +20,7 @@ local M = {}
 ---@type table<integer, dap.bp|dap.bp.func|dap.bp.data>
 local bp_by_lnum = {}
 
-local BUFFER_NAME = 'dap-breakpoints://editor'
+local BUFFER_NAME = 'dap-breakpoints://'
 
 local sign_ns = 'dap-breakpoints-editor'
 local diagnostic_ns = api.nvim_create_namespace('dap_breakpoints_editor_diagnostics')
