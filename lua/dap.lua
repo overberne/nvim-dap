@@ -1208,40 +1208,55 @@ end
 
 ---Edits the fields of a breakpoint. Passing nil preserves the field value.
 ---If the breakpoint does not exist, it is created with the specified fields.
+---@param bp? {
+---  bufnr?: integer,
+---  lnum?: integer,
+---  col?: integer,
+---  func?: string,
+---  data_id?: string,
+---  access_type?: dap.DataBreakpointAccessType|nil,
+---}
 ---@param opts? dap.bp.set.Opts
-function M_bp.edit(opts)
+function M_bp.edit(bp, opts)
+  bp = bp or {}
   opts = opts or {}
-  if opts.func then
+  if bp.func then
     assert(
-      type(opts.func) == "string",
-      "breakpoint function name must be a string. Got: " .. vim.inspect(opts.func)
+      type(bp.func) == "string",
+      "breakpoint function name must be a string. Got: " .. vim.inspect(bp.func)
     )
-    local fbp = lazy.breakpoints.func.get({ name = opts.func })
+    local fbp = lazy.breakpoints.func.get({ name = bp.func })
     fbp = fbp[1] or {}
+    if fbp then
+      lazy.breakpoints.func.remove(bp.func)
+    end
     M_bp.set({
-        func = opts.func,
+        func = opts.func or fbp.name,
         condition = opts.condition or fbp.condition,
         hit_condition = opts.hit_condition or fbp.hitCondition,
         disabled = opts.disabled or fbp.disabled,
     })
   elseif opts.data_id then
     assert(
-      type(opts.data_id) == "string",
-      "breakpoint data-id must be a string. Got: " .. vim.inspect(opts.data_id)
+      type(bp.data_id) == "string",
+      "breakpoint data-id must be a string. Got: " .. vim.inspect(bp.data_id)
     )
     assert(
-      not opts.access_type
-      or not (opts.access_type == "read" or opts.access_type == "write" or opts.access_type == "readWrite"),
-      'breakpoint access-type must be "read", "write", or "readWrite" Got: ' .. vim.inspect(opts.access_type)
+      not bp.access_type
+      or not (bp.access_type == "read" or bp.access_type == "write" or bp.access_type == "readWrite"),
+      'breakpoint access-type must be "read", "write", or "readWrite" Got: ' .. vim.inspect(bp.access_type)
     )
     local dbp = lazy.breakpoints.data.get({
-      data_id = opts.data_id,
-      access_type = opts.access_type
+      data_id = bp.data_id,
+      access_type = bp.access_type
     })
     dbp = dbp[1] or {}
+    if dbp then
+      lazy.breakpoints.data.remove(bp.data_id, bp.access_type)
+    end
     M_bp.set({
-        data_id = opts.data_id,
-        access_type = opts.access_type,
+        data_id = opts.data_id or dbp.dataId,
+        access_type = opts.access_type or dbp.accessType,
         can_persist = opts.can_persist or dbp.canPersist,
         condition = opts.condition or dbp.condition,
         hit_condition = opts.hit_condition or dbp.hitCondition,
@@ -1249,25 +1264,32 @@ function M_bp.edit(opts)
     })
   else
     assert(
-      not opts.bufnr or type(opts.bufnr) == "number" and opts.bufnr % 1 == 0,
-      "breakpoint buffer number must be an integer. Got: " .. vim.inspect(opts.bufnr)
+      not bp.bufnr or type(bp.bufnr) == "number" and bp.bufnr % 1 == 0,
+      "breakpoint buffer number must be an integer. Got: " .. vim.inspect(bp.bufnr)
     )
     assert(
-      not opts.lnum or type(opts.lnum) == "number" and opts.lnum % 1 == 0,
-      "breakpoint line number must be an integer. Got: " .. vim.inspect(opts.lnum)
+      not bp.lnum or type(bp.lnum) == "number" and bp.lnum % 1 == 0,
+      "breakpoint line number must be an integer. Got: " .. vim.inspect(bp.lnum)
     )
-    local bufnr = opts.bufnr or api.nvim_get_current_buf()
-    local lnum = opts.lnum or api.nvim_win_get_cursor(0)[1]
-    local bp = lazy.breakpoints.get({ bufexpr = bufnr, lnum = lnum, col = opts.col })
-    bp = bp[bufnr] and bp[bufnr][1] or {}
+    assert(
+      not bp.col or type(bp.col) == "number" and bp.col % 1 == 0,
+      "breakpoint column must be an integer. Got: " .. vim.inspect(bp.col)
+    )
+    local bufnr = bp.bufnr or api.nvim_get_current_buf()
+    local lnum = bp.lnum or api.nvim_win_get_cursor(0)[1]
+    local bps = lazy.breakpoints.get({ bufexpr = bufnr, lnum = lnum, col = bp.col })
+    local breakpoint = bps[bufnr] and bps[bufnr][1] or {}
+    if breakpoint then
+      lazy.breakpoints.remove(breakpoint.buf, breakpoint.line, breakpoint.column)
+    end
     M_bp.set({
-        bufnr = bufnr,
-        lnum = lnum,
-        col = opts.col or bp.column,
-        condition = opts.condition or bp.condition,
-        hit_condition = opts.hit_condition or bp.hitCondition,
-        log_message = opts.log_message or bp.logMessage,
-        disabled = opts.disabled or bp.disabled,
+        bufnr = opts.bufnr or breakpoint.buf,
+        lnum = opts.lnum or breakpoint.line,
+        col = opts.col or breakpoint.column,
+        condition = opts.condition or breakpoint.condition,
+        hit_condition = opts.hit_condition or breakpoint.hitCondition,
+        log_message = opts.log_message or breakpoint.logMessage,
+        disabled = opts.disabled or breakpoint.disabled,
     })
   end
 end
@@ -1331,6 +1353,10 @@ function M_bp.toggle_enabled(opts)
     assert(
       not opts.lnum or type(opts.lnum) == "number" and opts.lnum % 1 == 0,
       "breakpoint line number must be an integer. Got: " .. vim.inspect(opts.lnum)
+    )
+    assert(
+      not opts.col or type(opts.col) == "number" and opts.col % 1 == 0,
+      "breakpoint column must be an integer. Got: " .. vim.inspect(opts.col)
     )
     local bufnr = opts.bufnr or api.nvim_get_current_buf()
     local lnum = opts.lnum or api.nvim_win_get_cursor(0)[1]
