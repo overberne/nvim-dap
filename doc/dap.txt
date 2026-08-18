@@ -1365,6 +1365,7 @@ Available widgets entities:
 - frames
 - expression
 - threads
+- breakpoints
 
 
 Available widget builder functions:
