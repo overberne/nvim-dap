@@ -860,6 +860,23 @@ bp.toggle({opts})                                              *dap.bp.toggle()*
                     - `disabled`: `boolean?`: Optional flag for disabling a
                     breakpoint.
 
+bp.remove({opts})                                              *dap.bp.remove()*
+        Removes a breakpoint at the current line.
+
+        Parameters:
+            {opts}  Optional table containing:
+
+                    - `bufnr:` `integer?`: Optional buffer number from which to
+                    remove the breakpoint.
+                    - `lnum`: `integer?`: Optional line number from which to
+                    remove the breakpoint.
+                    - `col`: `integer?`: Optional column from which to remove
+                    the breakpoint.
+                    - `func`: `string?`: Optional function name.
+                    - `data_id`: `string?`: Optional data id.
+                    - `access_type`: `string?`: Optional access-type for data
+                    breakpoints.
+
 bp.toggle_enabled({opts})                              *dap.bp.toggle_enabled()*
         Toggles the enabled state of a breakpoint at the current line.
         
